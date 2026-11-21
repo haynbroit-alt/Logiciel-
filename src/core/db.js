@@ -87,6 +87,17 @@ CREATE TABLE IF NOT EXISTS channels (
 CREATE TABLE IF NOT EXISTS access_tokens (
   token_hash TEXT PRIMARY KEY, workspace_id INTEGER NOT NULL, purpose TEXT NOT NULL, created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS studio_projects (
+  id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL, name TEXT NOT NULL, domain TEXT NOT NULL DEFAULT 'reseaux',
+  concept TEXT NOT NULL DEFAULT '', stage INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'actif',
+  validation TEXT NOT NULL DEFAULT '{}', scores TEXT NOT NULL DEFAULT '{}', rights TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS studio_evidence (
+  id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL, project_id INTEGER NOT NULL, stage INTEGER NOT NULL,
+  topic TEXT NOT NULL DEFAULT '', statement TEXT NOT NULL, status TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'autre',
+  source TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_tasks_ws ON tasks(workspace_id, status);
 CREATE INDEX IF NOT EXISTS idx_tx_ws ON transactions(workspace_id, date);
 CREATE INDEX IF NOT EXISTS idx_actions_ws ON actions(workspace_id, status);
@@ -100,6 +111,7 @@ export function openDb(dbPath) {
   // Migrations légères : colonnes ajoutées après la première version.
   const hasColumn = (table, column) => raw.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
   if (!hasColumn('automations', 'trigger_event')) raw.exec('ALTER TABLE automations ADD COLUMN trigger_event TEXT');
+  if (!hasColumn('transactions', 'studio_project_id')) raw.exec('ALTER TABLE transactions ADD COLUMN studio_project_id INTEGER');
   if (!hasColumn('transactions', 'external_id')) raw.exec('ALTER TABLE transactions ADD COLUMN external_id TEXT');
   return {
     raw,

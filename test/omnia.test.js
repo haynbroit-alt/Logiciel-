@@ -530,3 +530,92 @@ test('intention avec IA : le plan du modèle est validé par le noyau, jamais d\
   const broken = await interpret(ai('désolé, pas de JSON'), 'Rappelle-moi de payer le loyer demain', { now: SAT, validate });
   assert.equal(broken.source, 'local'); assert.equal(broken.proposals[0].params.title, 'Payer le loyer'); assert.match(broken.fallbackReason, /non structuré/);
 });
+
+test('studio : la boucle n\'avance que sur preuves, de EXPLORER à OPTIMISER', async () => {
+  const { k } = setup();
+  const w = await k.createWorkspace({ name: 'Studio', description: 'Créateur de contenu vidéo et de jeux vidéo.' });
+  assert.ok(w.modules.includes('studio'));
+  const S = k.studio; const id = S.createProject(w.id, { name: 'Pack de transitions', domain: 'audiovisuel' }).id;
+  const blocked = (re) => assert.throws(() => S.advance(w.id, id), re);
+  const ev = (input) => S.addEvidence(w.id, id, input); const step = () => S.advance(w.id, id).stageName;
+  // Classement des résultats : PROUVÉ et CONFLIT exigent une source.
+  assert.throws(() => ev({ statement: 'Forte demande', status: 'PROUVE' }), /exige sa source/);
+  assert.throws(() => ev({ statement: 'Avis divergents', status: 'CONFLIT' }), /sources/);
+  blocked(/aucune preuve/);
+  ev({ statement: 'Tendance repérée, non vérifiée', status: 'INCONNU', kind: 'etude' }); assert.equal(step(), 'DÉTECTER');
+  ev({ statement: 'Des créateurs demandent des transitions prêtes à l\'emploi', status: 'PROUVE', kind: 'etude', topic: 'besoin', source: 'https://forum.example/fil-123' }); assert.equal(step(), 'ÉVALUER');
+  // Arbitrage : huit critères, bornés par leur barème.
+  ev({ statement: 'Notation réalisée', status: 'INCONNU' }); blocked(/huit critères/);
+  assert.throws(() => S.updateProject(w.id, id, { scores: { demande: { points: 25 } } }), /0 à 20/);
+  const p = S.updateProject(w.id, id, { scores: { demande: { points: 14 }, benefice: { points: 12 }, encaissement: { points: 12 }, cout: { points: 15 }, recurrence: { points: 4 }, production: { points: 8 }, differenciation: { points: 3 }, croissance: { points: 3 } } });
+  assert.equal(p.score, 71); assert.equal(step(), 'CONCEVOIR');
+  // Validation obligatoire : six points, dont un besoin documenté et un modèle chiffré.
+  ev({ statement: 'Produit défini', status: 'INCONNU' }); blocked(/Validation obligatoire/);
+  S.updateProject(w.id, id, { validation: { public: 'Monteurs vidéo indépendants', besoin: 'Gagner du temps au montage', proposition: '50 transitions prêtes', distribution: 'Boutique en ligne', modele: { prix: 19, cout_unitaire: 1, couts_fixes: 90, ventes_cible: 40 } } });
+  blocked(/test/i);
+  const v = S.updateProject(w.id, id, { validation: { test: { mesure: 'Précommandes en 7 jours', seuil: '5' } } });
+  assert.ok(v.validationState.every((x) => x.ok)); assert.deepEqual(v.projection, { marge_unitaire: 18, seuil_rentabilite_ventes: 5, benefice_vise: 630 });
+  assert.equal(v.validation.public, 'Monteurs vidéo indépendants', 'une mise à jour partielle ne vide pas le reste');
+  assert.equal(step(), 'PROTOTYPER');
+  ev({ statement: 'Prototype de 5 transitions monté', status: 'PROUVE', source: 'fichier demo-v1.mp4' }); blocked(/droits/);
+  S.updateProject(w.id, id, { rights: { verifie: true, note: 'Créations originales, aucune ressource tierce' } }); assert.equal(step(), 'TESTER');
+  // Popularité n'est pas rentabilité.
+  ev({ statement: '12 000 vues sur la démo', status: 'PROUVE', kind: 'interet', source: 'https://video.example/stats/42' }); blocked(/test n'a pas de résultat/);
+  ev({ statement: '7 précommandes en 7 jours (seuil 5)', status: 'PROUVE', kind: 'test', source: 'export boutique du 12/06' }); assert.equal(step(), 'VENDRE');
+  ev({ statement: 'Page de vente publiée', status: 'PROUVE', source: 'https://boutique.example/pack' }); blocked(/preuve commerciale/);
+  assert.ok(k.runAnalysis(w.id).insights.some((i) => i.rule === 'studio.popularite_sans_revenu'));
+  assert.throws(() => S.recordSale(w.id, id, { amount: 19, counterparty: 'Léa' }), /Référence/);
+  S.recordSale(w.id, id, { amount: 19, counterparty: 'Léa', source: 'paiement pi_001', date: d(2) }); assert.equal(step(), 'ENCAISSER');
+  S.recordSale(w.id, id, { amount: 19, counterparty: 'Léa', source: 'paiement pi_002', date: d(1) }); S.recordSale(w.id, id, { amount: 19, counterparty: 'Tom', source: 'paiement pi_003', date: d(1) });
+  assert.equal(step(), 'MESURER');
+  ev({ statement: 'Marge réelle conforme à la prévision', status: 'PROUVE', kind: 'test', source: 'relevé du 14/06' }); assert.equal(step(), 'OPTIMISER');
+  const done = S.get(w.id, id);
+  assert.deepEqual([done.metrics.chiffre_affaires_encaisse, done.metrics.clients_payants, done.metrics.recurrence, done.metrics.benefice_net, done.commercialProofs], [57, 2, 0.5, 57, 3]);
+  assert.throws(() => S.advance(w.id, id), /dernière étape/);
+  assert.ok(!k.runAnalysis(w.id).insights.some((i) => i.rule.startsWith('studio.')), 'plus aucune alerte une fois les ventes prouvées');
+});
+
+test('studio : autofinancement — toute dépense passe par une autorisation, le dépassement est signalé', async () => {
+  const { k } = setup();
+  const w = await k.createWorkspace({ name: 'Studio', description: 'Studio de jeux vidéo indépendant' });
+  const id = k.studio.createProject(w.id, { name: 'Jeu de rythme', domain: 'jeux' }).id;
+  assert.deepEqual(k.studio.overview(w.id).autofinancement, { budget_initial: 0, encaisse: 0, depense: 0, disponible: 0, depassement: 0 });
+  const a = await k.execution.request(k.workspace(w.id), { type: 'studio.engager_depense', params: { projectId: id, amount: 120, label: 'Licence moteur', category: 'outils' } });
+  assert.equal(a.status, 'en_attente'); assert.equal(k.studio.get(w.id, id).metrics.couts, 0, 'rien n\'est dépensé avant autorisation');
+  const done = await k.execution.approve(k.workspace(w.id), a.id);
+  assert.equal(done.status, 'reussie'); assert.equal(done.result.autofinance, false); assert.match(done.result.note, /non couverte/);
+  const o = k.studio.overview(w.id);
+  assert.deepEqual([o.indicateurs.benefice_net_conserve, o.autofinancement.depassement, o.autofinancement.disponible], [-120, 120, 0]);
+  const rules = k.runAnalysis(w.id).insights.map((i) => i.rule);
+  assert.ok(rules.includes('studio.autofinancement_depasse') && rules.includes('studio.depenses_sans_encaissement'));
+  // Une vente réelle reconstitue la capacité ; la dépense suivante est alors couverte.
+  k.studio.recordSale(w.id, id, { amount: 300, counterparty: 'Éditeur', source: 'virement 2026-06-10 réf. 8841' });
+  assert.equal(k.studio.overview(w.id).autofinancement.disponible, 180);
+  const b = await k.execution.request(k.workspace(w.id), { type: 'studio.engager_depense', params: { projectId: id, amount: 50, label: 'Publicité de lancement', category: 'acquisition' } });
+  assert.equal((await k.execution.approve(k.workspace(w.id), b.id)).result.autofinance, true);
+  assert.equal(k.studio.get(w.id, id).metrics.cout_acquisition, 50);
+  // Module désactivé : le studio se ferme, y compris pour les demandes déjà en attente.
+  const c = await k.execution.request(k.workspace(w.id), { type: 'studio.engager_depense', params: { projectId: id, amount: 10, label: 'x' } });
+  k.updateWorkspace(w.id, { modules: w.modules.filter((m) => m !== 'studio') });
+  assert.equal((await k.execution.approve(k.workspace(w.id), c.id)).status, 'echouee');
+  assert.equal(k.studio.overview(w.id).projects.length, 1, 'les données restent, seules les actions sont fermées');
+});
+
+test('studio : API fermée si le module est inactif ; documents produits à partir du seul contenu saisi', async () => {
+  const { k, config } = setup();
+  const server = createApp(config, k); await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const call = (method, p, body) => fetch(base + p, { method, headers: body ? { 'content-type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+  try {
+    const plain = await k.createWorkspace({ name: 'Boulangerie', description: 'Je tiens une boulangerie.' });
+    assert.equal((await call('GET', `/api/espaces/${plain.id}/studio`)).status, 409);
+    const w = await k.createWorkspace({ name: 'Studio', description: 'Créateur de vidéos' });
+    const p = await (await call('POST', `/api/espaces/${w.id}/studio/projets`, { name: 'Série courte', domain: 'reseaux' })).json();
+    assert.equal(p.stageName, 'EXPLORER');
+    assert.equal((await call('POST', `/api/espaces/${w.id}/studio/projets/${p.id}/avancer`, {})).status, 409);
+    const doc = await (await call('POST', `/api/espaces/${w.id}/studio/projets/${p.id}/generer`, { template: 'script_video' })).json();
+    assert.equal(doc.source, 'local'); assert.match(doc.content, /# Script vidéo/); assert.match(doc.content, /À compléter/);
+    const o = await (await call('GET', `/api/espaces/${w.id}/studio`)).json();
+    assert.equal(o.reference.criteria.reduce((s, c) => s + c.max, 0), 100); assert.equal(o.reference.stages.length, 10);
+  } finally { server.close(); }
+});

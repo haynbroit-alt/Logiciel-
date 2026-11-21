@@ -88,3 +88,13 @@ main > * + * { margin-top: 14px; }
 .chart .axis { stroke: var(--line); stroke-width: 1; }
 .chart .tick { fill: var(--muted); font-size: 11px; }
 .prio { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; }
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.steps li { font-size: .72rem; font-weight: 600; letter-spacing: .03em; padding: 3px 9px; border-radius: 99px; background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
+.steps li.past { background: var(--good-soft); color: var(--good); border-color: transparent; }
+.steps li.now { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.checks li::before { display: inline-block; width: 1.4em; font-weight: 700; }
+.checks li.ok::before { content: "✓"; color: var(--good); } .checks li.ko::before { content: "✗"; color: var(--bad); }
+form.inline > label, .row > label { flex: 0 1 auto; min-width: 120px; }
+form.inline > label.grow, .row > label.grow { flex: 1 1 240px; }
+label.grow > input, label.grow > select { width: 100%; }

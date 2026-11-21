@@ -15,7 +15,7 @@ const h = (tag, attrs = {}, ...children) => {
   return el;
 };
 const $app = document.getElementById('app');
-const state = { meta: null, workspaces: [], wsId: Number(localStorage.getItem('omnia.ws')) || null, view: 'tableau', chat: [], openDoc: null, metric: 'solde_30j' };
+const state = { meta: null, workspaces: [], wsId: Number(localStorage.getItem('omnia.ws')) || null, view: 'tableau', chat: [], openDoc: null, metric: 'solde_30j', studioProject: null };
 
 function toast(message, error = false) {
   const t = document.getElementById('toast');
@@ -143,7 +143,7 @@ const importBackup = act(async (ev) => {
 // ---------- Vues ----------
 const VIEWS = [
   ['tableau', 'Tableau de bord'], ['assistant', 'Assistant'], ['decisions', 'Décisions'], ['actions', 'Actions'],
-  ['gestion', 'Gestion', 'gestion'], ['finances', 'Finances', 'finances'], ['memoire', 'Mémoire', 'memoire'],
+  ['studio', 'Studio', 'studio'], ['gestion', 'Gestion', 'gestion'], ['finances', 'Finances', 'finances'], ['memoire', 'Mémoire', 'memoire'],
   ['automatisations', 'Automatisations', 'automatisations'], ['connexions', 'Connexions', 'connecteurs'], ['journal', 'Journal'], ['noyau', 'Noyau'], ['reglages', 'Réglages'],
 ];
 const page = (title, subtitle, actions, ...content) => [
@@ -392,6 +392,102 @@ const views = {
           h('form', { class: 'inline', onsubmit: act((ev) => api('POST', ws('/actions'), { type: 'stripe.importer', params: { days: Number(formData(ev.target).days) } }), (a) => toast(a.status === 'reussie' ? `${a.result.importees} mouvement(s) importé(s), ${a.result.deja_presentes} déjà présent(s)${a.result.autre_devise ? `, ${a.result.autre_devise} ignoré(s) (autre devise)` : ''}` : `Échec : ${a.error}`, a.status !== 'reussie')) },
             h('label', {}, 'Période', h('select', { name: 'days' }, h('option', { value: 30 }, '30 derniers jours'), h('option', { value: 90 }, '90 derniers jours'), h('option', { value: 365 }, '12 derniers mois'))), h('button', {}, 'Importer depuis Stripe'))]
           : h('p', { class: 'muted small' }, 'Non configuré. Pour l\'activer, démarrez OMNIA avec OMNIA_STRIPE_KEY (clé restreinte, lecture des « balance transactions » uniquement).')));
+  },
+
+  async studio() {
+    const o = await api('GET', ws('/studio')); const R = o.reference; const cur = state.workspace.currency; const k = o.indicateurs; const f = o.autofinancement;
+    const pct = (v) => (v === null ? 'INCONNU' : `${Math.round(v * 100)} %`); const eur = (v) => (v === null ? 'INCONNU' : money(v, cur));
+    const kpi = (label, value, cls = '') => h('div', { class: 'card kpi' }, h('div', { class: 'muted small' }, label), h('div', { class: `v ${cls}` }, value));
+    const proof = (p) => (p.commercialProofs ? badge('reussie', `${p.commercialProofs} preuve(s) commerciale(s)`) : badge('echouee', 'aucune preuve commerciale'));
+    const statusBadge = (st) => badge({ PROUVE: 'reussie', INCONNU: 'en_attente', CONFLIT: 'risque', ECHEC: 'echouee' }[st], R.statuses[st]);
+    const sel = o.projects.find((x) => x.id === state.studioProject) ?? null;
+    const patchProject = (body, msg) => act(() => api('PATCH', ws(`/studio/projets/${sel.id}`), typeof body === 'function' ? body() : body), msg);
+
+    const detail = (p) => {
+      const v = p.validation; const m = p.metrics; const last = p.stage === R.stages.length - 1;
+      return h('div', { class: 'stack' },
+        h('div', { class: 'card stack' },
+          h('div', { class: 'row between' }, h('h2', {}, p.name), h('div', { class: 'row' }, badge('gratuit', p.domainLabel), proof(p), h('button', { class: 'link', onclick: () => { state.studioProject = null; render(); } }, 'Fermer'))),
+          h('ol', { class: 'steps' }, R.stages.map((st, i) => h('li', { class: i < p.stage ? 'past' : i === p.stage ? 'now' : '', title: R.stageHelp[i] }, st))),
+          h('p', {}, h('strong', {}, `${p.stageName} — `), p.stageHelp),
+          p.status !== 'actif' ? h('div', { class: 'notice' }, `Projet ${p.status === 'abandonne' ? 'abandonné' : 'terminé'}.`)
+            : last ? h('div', { class: 'notice info' }, 'Dernière étape : améliorer, développer ou abandonner au vu des chiffres réels.')
+              : p.blockers.length ? h('div', { class: 'notice stack' }, h('strong', {}, `Avant de passer à ${R.stages[p.stage + 1]} :`), p.blockers.map((b) => h('span', { class: 'small' }, `• ${b}`)))
+                : h('div', { class: 'notice info' }, `Toutes les conditions sont réunies pour passer à ${R.stages[p.stage + 1]}.`),
+          h('div', { class: 'row' },
+            p.status === 'actif' && !last ? h('button', { class: 'primary', disabled: p.blockers.length > 0, onclick: act(() => api('POST', ws(`/studio/projets/${p.id}/avancer`)), 'Étape franchie') }, `Passer à ${R.stages[p.stage + 1]}`) : null,
+            p.status === 'actif' ? h('button', { class: 'danger', onclick: act(async () => { if (window.confirm(`Abandonner « ${p.name} » ? Le projet et ses preuves restent consultables.`)) await api('PATCH', ws(`/studio/projets/${p.id}`), { status: 'abandonne' }); }) }, 'Abandonner') : h('button', { onclick: patchProject({ status: 'actif' }, 'Projet réactivé') }, 'Réactiver'))),
+
+        h('div', { class: 'grid cols-2' },
+          h('form', { class: 'card stack', onsubmit: patchProject(() => { const d = formData(document.getElementById('studio-validation')); return { concept: d.concept, validation: { public: d.public, besoin: d.besoin, proposition: d.proposition, distribution: d.distribution, modele: { prix: d.prix, cout_unitaire: d.cout_unitaire, couts_fixes: d.couts_fixes, ventes_cible: d.ventes_cible }, test: { mesure: d.mesure, seuil: d.seuil } } }; }, 'Validation enregistrée'), id: 'studio-validation' },
+            h('h2', {}, 'Validation obligatoire'), h('p', { class: 'muted small' }, 'Aucune production importante tant que ces six points ne sont pas remplis.'),
+            h('ul', { class: 'checks' }, p.validationState.map((x) => h('li', { class: x.ok ? 'ok' : 'ko' }, h('strong', {}, x.label), x.ok ? null : h('span', { class: 'muted small' }, ` — ${x.reason}`)))),
+            h('label', {}, 'Concept', h('textarea', { name: 'concept', value: p.concept })),
+            h('label', {}, 'Public visé', h('input', { name: 'public', value: v.public ?? '', maxLength: 1000 })),
+            h('label', {}, 'Problème, désir ou besoin', h('input', { name: 'besoin', value: v.besoin ?? '', maxLength: 1000 })),
+            h('label', {}, 'Proposition de valeur', h('input', { name: 'proposition', value: v.proposition ?? '', maxLength: 1000 })),
+            h('label', {}, 'Stratégie de distribution', h('input', { name: 'distribution', value: v.distribution ?? '', maxLength: 1000 })),
+            h('div', { class: 'row' }, [['prix', 'Prix de vente'], ['cout_unitaire', 'Coût par vente'], ['couts_fixes', 'Coûts fixes'], ['ventes_cible', 'Ventes visées']].map(([n, l]) => h('label', {}, l, h('input', { name: n, type: 'number', step: '0.01', min: '0', value: v.modele?.[n] ?? '', size: 8 })))),
+            p.projection ? h('p', { class: 'small' }, h('strong', {}, 'Prévision (non prouvée) : '), `marge par vente ${money(p.projection.marge_unitaire, cur)} · rentable à partir de ${p.projection.seuil_rentabilite_ventes ?? '—'} vente(s)`, p.projection.benefice_vise !== null ? ` · bénéfice visé ${money(p.projection.benefice_vise, cur)}` : '') : null,
+            h('div', { class: 'row' }, h('label', { class: 'grow' }, 'Test : ce qui sera mesuré', h('input', { name: 'mesure', value: v.test?.mesure ?? '', placeholder: 'Ex. : précommandes en 7 jours' })), h('label', {}, 'Seuil de succès', h('input', { name: 'seuil', value: v.test?.seuil ?? '', placeholder: 'Ex. : 10', size: 10 }))),
+            h('div', {}, h('button', { class: 'primary' }, 'Enregistrer'))),
+
+          h('div', { class: 'stack' },
+            h('form', { class: 'card stack', id: 'studio-scores', onsubmit: patchProject(() => { const d = formData(document.getElementById('studio-scores')); return { scores: Object.fromEntries(R.criteria.map((c) => [c.key, { points: d[`p_${c.key}`], justification: d[`j_${c.key}`] }])) }; }, 'Arbitrage enregistré') },
+              h('div', { class: 'row between' }, h('h2', {}, 'Arbitrage économique'), h('strong', {}, p.score === null ? `${p.scoredCriteria}/8 critères notés` : `${p.score} / 100`)),
+              h('p', { class: 'muted small' }, 'Aucune note ne remplace les preuves commerciales.'),
+              R.criteria.map((c) => h('div', { class: 'row' }, h('label', { class: 'grow' }, `${c.label} (sur ${c.max})`, h('input', { name: `j_${c.key}`, value: p.scores[c.key]?.justification ?? '', placeholder: 'Justification', maxLength: 500 })), h('label', {}, 'Points', h('input', { name: `p_${c.key}`, type: 'number', min: 0, max: c.max, step: 1, value: p.scores[c.key]?.points ?? '', size: 4 })))),
+              h('div', {}, h('button', {}, 'Enregistrer la notation'))),
+            h('form', { class: 'card stack', id: 'studio-rights', onsubmit: patchProject(() => { const d = formData(document.getElementById('studio-rights')); return { rights: { verifie: d.verifie === 'on', note: d.note } }; }, 'Vérification enregistrée') },
+              h('h2', {}, 'Qualité et droits d\'exploitation'),
+              h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'verifie', checked: p.rights.verifie === true }), 'Vérifiés : la création est originale ou ses contenus tiers sont sous licence'),
+              h('label', {}, 'Sur quelle base', h('input', { name: 'note', value: p.rights.note ?? '', maxLength: 500, placeholder: 'Ex. : musique sous licence X, visuels créés en interne' })), h('div', {}, h('button', {}, 'Enregistrer'))))),
+
+        h('div', { class: 'card stack' }, h('h2', {}, `Preuves (${p.evidence.length})`),
+          h('p', { class: 'muted small' }, 'Chaque résultat est classé. PROUVÉ exige une source ; ce qui n\'est pas vérifié est INCONNU. Les vues et les likes sont un intérêt, pas un revenu.'),
+          h('form', { class: 'inline', onsubmit: act((ev) => api('POST', ws(`/studio/projets/${p.id}/preuves`), formData(ev.target)), 'Résultat consigné') },
+            h('label', { class: 'grow' }, `Résultat constaté à l'étape ${p.stageName}`, h('input', { name: 'statement', required: true, maxLength: 1000 })),
+            h('label', {}, 'Classement', h('select', { name: 'status' }, Object.entries(R.statuses).map(([key, l]) => h('option', { value: key, selected: key === 'INCONNU' }, l)))),
+            h('label', {}, 'Nature', h('select', { name: 'kind' }, Object.entries(R.kinds).map(([key, l]) => h('option', { value: key, selected: key === 'autre' }, l)))),
+            h('label', {}, 'Concerne', h('select', { name: 'topic' }, h('option', { value: '' }, '—'), R.validation.map((x) => h('option', { value: x.key }, x.label)))),
+            h('label', { class: 'grow' }, 'Source (lien, référence, protocole de test)', h('input', { name: 'source', maxLength: 500 })), h('button', {}, 'Consigner')),
+          p.evidence.map((e) => h('div', { class: 'item row between' }, h('div', {}, h('div', { class: 'row' }, statusBadge(e.status), h('strong', {}, e.statement)),
+            h('p', { class: 'muted small' }, `${R.stages[e.stage]} · ${R.kinds[e.kind]} · ${fdate(e.created_at)}`, e.source ? ` · source : ${e.source}` : ' · sans source')),
+            h('button', { class: 'link danger', onclick: act(() => api('DELETE', ws(`/studio/preuves/${e.id}`)), 'Preuve retirée (trace conservée au journal)') }, 'Retirer')))),
+
+        h('div', { class: 'grid cols-2' },
+          h('div', { class: 'card stack' }, h('h2', {}, 'Résultats réels du projet'),
+            h('table', {}, h('tbody', {}, [['Chiffre d\'affaires encaissé', eur(m.chiffre_affaires_encaisse)], ['Coûts', eur(m.couts)], ['Bénéfice net', eur(m.benefice_net)], ['Clients payants', m.clients_payants], ['Marge nette', pct(m.marge_nette)], ['Coût d\'acquisition par client', eur(m.cout_acquisition)], ['Clients ayant racheté', pct(m.recurrence)], ['Jours entre conception et premier encaissement', m.jours_avant_premier_encaissement ?? 'INCONNU']]
+              .map(([l, val]) => h('tr', {}, h('td', {}, l), h('td', { class: 'num' }, val))))),
+            h('form', { class: 'inline', onsubmit: act((ev) => api('POST', ws(`/studio/projets/${p.id}/encaissements`), formData(ev.target)), 'Encaissement enregistré et consigné comme preuve') },
+              h('label', {}, 'Montant encaissé', h('input', { name: 'amount', type: 'number', step: '0.01', min: '0.01', required: true, size: 8 })), h('label', {}, 'Client', h('input', { name: 'counterparty', maxLength: 200 })),
+              h('label', {}, 'Nature', h('select', { name: 'kind' }, h('option', { value: 'achat' }, 'Achat'), h('option', { value: 'precommande' }, 'Précommande'))),
+              h('label', { class: 'grow' }, 'Référence du paiement (obligatoire)', h('input', { name: 'source', required: true, minLength: 5, maxLength: 500 })), h('button', {}, 'Enregistrer l\'encaissement'))),
+          h('div', { class: 'stack' },
+            h('form', { class: 'card stack', onsubmit: act((ev) => { const d = formData(ev.target); return api('POST', ws('/actions'), { type: 'studio.engager_depense', params: { projectId: p.id, amount: Number(d.amount), label: d.label, category: d.category } }); }, 'Demande de dépense enregistrée — elle attend une autorisation dans « Actions »') },
+              h('h2', {}, 'Engager une dépense'), h('p', { class: 'muted small' }, `Toute dépense exige une autorisation. Bénéfices réellement disponibles : ${money(f.disponible, cur)}.`),
+              h('div', { class: 'row' }, h('label', {}, 'Montant', h('input', { name: 'amount', type: 'number', step: '0.01', min: '0.01', required: true, size: 8 })), h('label', { class: 'grow' }, 'Objet', h('input', { name: 'label', required: true, maxLength: 300 })),
+                h('label', {}, 'Poste', h('input', { name: 'category', maxLength: 80, placeholder: 'acquisition, outils…', size: 14 }))), h('div', {}, h('button', {}, 'Demander l\'autorisation'))),
+            h('div', { class: 'card stack' }, h('h2', {}, 'Produire un document de travail'), h('p', { class: 'muted small' }, 'Texte uniquement, à partir de ce qui est saisi sur le projet ; ce qui manque y est marqué INCONNU ou « À compléter ».'),
+              h('div', { class: 'row' }, [['concept', 'Fiche concept'], ['script_video', 'Script vidéo'], ['fiche_jeu', 'Fiche de jeu'], ['offre_tarif', 'Offre et prix'], ['campagne', 'Plan de campagne']].map(([t, l]) => h('button', { onclick: act(() => api('POST', ws(`/studio/projets/${p.id}/generer`), { template: t }), (doc) => { state.openDoc = doc.id; state.view = 'memoire'; toast('Document créé dans la Mémoire'); }) }, l)))))));
+    };
+
+    return page('Studio économique', 'Détecter ce que le public veut, créer ce qui apporte de la valeur, vendre ce qui fonctionne, développer ce qui rapporte.', null,
+      h('div', { class: 'grid kpis' }, kpi('Bénéfice net conservé', eur(k.benefice_net_conserve), k.benefice_net_conserve < 0 ? 'neg' : ''), kpi('Clients payants', k.clients_payants), kpi('Chiffre d\'affaires encaissé', eur(k.chiffre_affaires_encaisse)),
+        kpi('Marge nette', pct(k.marge_nette)), kpi('Coût d\'acquisition', eur(k.cout_acquisition)), kpi('Clients ayant racheté', pct(k.recurrence)), kpi('Jours avant 1er encaissement', k.delai_moyen_premier_encaissement ?? 'INCONNU')),
+      h('div', { class: `notice ${f.depassement > 0 ? '' : 'info'}` }, h('strong', {}, 'Autofinancement — '), `budget initial 0 € · encaissé ${money(f.encaisse, cur)} · dépensé ${money(f.depense, cur)} · `,
+        f.depassement > 0 ? `dépassement de ${money(f.depassement, cur)} : aucun réinvestissement possible tant qu'il n'est pas comblé par des ventes réelles.` : `disponible pour réinvestir : ${money(f.disponible, cur)}.`),
+      sel ? detail(sel) : null,
+      h('div', { class: 'card stack' }, h('h2', {}, `Opportunités (${o.projects.length})`),
+        h('form', { class: 'inline', onsubmit: act((ev) => api('POST', ws('/studio/projets'), formData(ev.target)), (p) => { state.studioProject = p.id; toast('Projet créé à l\'étape EXPLORER'); }) },
+          h('label', { class: 'grow' }, 'Nouvelle opportunité', h('input', { name: 'name', required: true, maxLength: 160, placeholder: 'Ex. : pack de transitions vidéo pour créateurs' })),
+          h('label', {}, 'Domaine', h('select', { name: 'domain' }, Object.entries(R.domains).map(([key, l]) => h('option', { value: key }, l)))), h('button', { class: 'primary' }, 'Créer')),
+        o.projects.length ? h('div', { class: 'tablewrap' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Projet'), h('th', {}, 'Étape'), h('th', { class: 'num' }, 'Note / 100'), h('th', {}, 'Preuve commerciale'), h('th', { class: 'num' }, 'Bénéfice net réel'), h('th', {}))),
+          h('tbody', {}, [...o.ranking.map((id) => o.projects.find((x) => x.id === id)), ...o.projects.filter((x) => x.status !== 'actif')].map((p) => h('tr', {},
+            h('td', {}, h('strong', { class: p.status !== 'actif' ? 'done' : '' }, p.name), h('div', { class: 'muted small' }, p.domainLabel)), h('td', {}, p.status === 'actif' ? p.stageName : p.status === 'abandonne' ? 'Abandonné' : 'Terminé'),
+            h('td', { class: 'num' }, p.score ?? `${p.scoredCriteria}/8 notés`), h('td', {}, proof(p)), h('td', { class: `num ${p.metrics.benefice_net < 0 ? 'neg' : ''}` }, money(p.metrics.benefice_net, cur)),
+            h('td', { class: 'right' }, h('button', { onclick: () => { state.studioProject = p.id; render().then(() => window.scrollTo(0, 0)); } }, 'Ouvrir'))))))) : empty('Aucune opportunité. Créez-en une : elle commence à l\'étape EXPLORER et n\'avance que sur preuves.')),
+      h('p', { class: 'muted small' }, 'Le studio structure, contrôle et mesure. Il n\'observe pas les tendances et ne produit ni image, ni vidéo, ni prototype de jeu : ces résultats se consignent ici avec leur source. Il ne publie, ne vend et ne paie rien lui-même.'));
   },
 
   async noyau() {

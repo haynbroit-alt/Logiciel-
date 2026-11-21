@@ -6,7 +6,7 @@ Un seul logiciel, tous les secteurs : OMNIA transforme les besoins, problèmes e
 (entreprise, commerce, indépendant, association, collectivité, particulier) en constats chiffrés,
 en recommandations comparées et en actions concrètes — exécutées uniquement avec votre accord.
 
-> Version 0.6 — socle fonctionnel. La section [État réel](#état-réel-de-cette-version) dit précisément ce qui est fait et ce qui ne l'est pas.
+> Version 0.7 — socle fonctionnel. La section [État réel](#état-réel-de-cette-version) dit précisément ce qui est fait et ce qui ne l'est pas.
 
 ## Démarrer
 
@@ -15,7 +15,7 @@ Prérequis : Node.js ≥ 22.13. Aucune dépendance à installer, aucun compte, a
 ```bash
 npm run demo    # facultatif : crée un espace d'exemple (atelier de menuiserie)
 npm start       # http://localhost:4747
-npm test        # 29 tests
+npm test        # 32 tests
 ```
 
 Les données restent sur votre machine, dans `data/omnia.db` (SQLite).
@@ -57,6 +57,31 @@ jamais un envoi vers l'extérieur.
 
 Le tableau de bord affiche les **priorités du moment** : autorisations en attente, puis retards, échéances proches
 et recommandations.
+
+## Studio économique
+
+Un module pour détecter, évaluer, prototyper, tester et vendre des créations — réseaux sociaux, audiovisuel, jeux
+vidéo, outils logiciels. Il est proposé d'office aux espaces du secteur créatif et s'active ailleurs dans Réglages.
+Ses règles ne sont pas des conseils : elles sont appliquées par le code.
+
+| Principe | Ce que le code impose |
+|---|---|
+| Boucle en dix étapes | `EXPLORER → DÉTECTER → ÉVALUER → CONCEVOIR → PROTOTYPER → TESTER → VENDRE → ENCAISSER → MESURER → OPTIMISER` ; on ne quitte une étape que si elle a laissé une preuve |
+| Validation obligatoire | Pas de prototype sans les six points : public, besoin documenté par une preuve, proposition de valeur, distribution, modèle chiffré à marge positive, test avec seuil |
+| Arbitrage économique | Huit critères notés sur 100 selon le barème fixé ; la note classe, elle n'ouvre aucune étape de vente |
+| Résultats classés | `PROUVÉ` exige une source, `CONFLIT` aussi ; sans source, c'est `INCONNU` |
+| Popularité ≠ rentabilité | Vues, likes et commentaires sont enregistrés comme « intérêt » et ne valident jamais la vente ; seuls achats, précommandes et engagements vérifiables le font |
+| Droits d'exploitation | Pas de test public sans vérification déclarée et motivée |
+| Aucune vente inventée | Un encaissement ne s'enregistre qu'avec sa référence de paiement et devient une preuve d'achat |
+| Autofinancement | Budget initial 0 € ; toute dépense est une action sensible soumise à autorisation ; le disponible ne compte que l'encaissé moins le dépensé ; un dépassement déclenche une alerte |
+| Indicateur principal | Bénéfice net réellement conservé, puis clients payants, chiffre d'affaires encaissé, marge, coût d'acquisition, récurrence, délai avant premier encaissement |
+
+**Ce que le studio ne fait pas.** Il n'observe pas les tendances, n'étudie pas les concurrents et ne produit ni
+image, ni vidéo, ni animation, ni prototype de jeu : aucune source de marché ni aucun générateur n'y est branché.
+Il ne publie, ne vend et n'encaisse rien lui-même. Il produit des documents de travail en texte (fiche concept,
+script vidéo, fiche de jeu, offre et prix, plan de campagne) à partir de ce que vous avez saisi, en marquant
+`INCONNU` ce qui manque. La recherche et la production restent à faire par vous ou par des outils à connecter ;
+leurs résultats se consignent ici avec leur source. La sauvegarde d'un espace n'inclut pas encore les projets du studio.
 
 ## Architecture : un noyau central
 
@@ -169,7 +194,7 @@ Autres variables : `OMNIA_PORT` (4747), `OMNIA_DATA_DIR` (`./data`), `OMNIA_SCHE
 ## État réel de cette version
 
 **Fait et vérifié** (tests automatisés + parcours complet dans un navigateur) : espaces multiples cloisonnés, comptes
-utilisateurs avec rôles par espace, compréhension des demandes en langage courant et classement des priorités,
+utilisateurs avec rôles par espace, studio économique (étapes, validation, preuves, autofinancement), compréhension des demandes en langage courant et classement des priorités,
 noyau à modules (registre, événements, modules externes, clé d'API), gestion
 des tâches et projets, finances avec import CSV, mémoire documentaire, analyse, recommandations, exécution avec
 autorisations, automatisations périodiques, journal d'audit, génération de documents et assistant en mode local,
