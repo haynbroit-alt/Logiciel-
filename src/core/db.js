@@ -71,6 +71,16 @@ CREATE TABLE IF NOT EXISTS audit_log (
   event TEXT NOT NULL, entity TEXT NOT NULL DEFAULT '', entity_id INTEGER,
   detail TEXT NOT NULL DEFAULT '{}', prev_hash TEXT NOT NULL, hash TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
+  admin INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memberships (
+  workspace_id INTEGER NOT NULL, user_id INTEGER NOT NULL, role TEXT NOT NULL, PRIMARY KEY (workspace_id, user_id)
+);
 CREATE INDEX IF NOT EXISTS idx_tasks_ws ON tasks(workspace_id, status);
 CREATE INDEX IF NOT EXISTS idx_tx_ws ON transactions(workspace_id, date);
 CREATE INDEX IF NOT EXISTS idx_actions_ws ON actions(workspace_id, status);

@@ -6,7 +6,7 @@ Un seul logiciel, tous les secteurs : OMNIA transforme les besoins, problèmes e
 (entreprise, commerce, indépendant, association, collectivité, particulier) en constats chiffrés,
 en recommandations comparées et en actions concrètes — exécutées uniquement avec votre accord.
 
-> Version 0.2 — socle fonctionnel. La section [État réel](#état-réel-de-cette-version) dit précisément ce qui est fait et ce qui ne l'est pas.
+> Version 0.3 — socle fonctionnel. La section [État réel](#état-réel-de-cette-version) dit précisément ce qui est fait et ce qui ne l'est pas.
 
 ## Démarrer
 
@@ -15,7 +15,7 @@ Prérequis : Node.js ≥ 22.13. Aucune dépendance à installer, aucun compte, a
 ```bash
 npm run demo    # facultatif : crée un espace d'exemple (atelier de menuiserie)
 npm start       # http://localhost:4747
-npm test        # 13 tests
+npm test        # 14 tests
 ```
 
 Les données restent sur votre machine, dans `data/omnia.db` (SQLite).
@@ -40,7 +40,7 @@ revenus en baisse ou en hausse.
 
 ```
 src/
-  core/        noyau (kernel.js), mémoire SQLite (db.js), journal d'audit chaîné (audit.js), import CSV
+  core/        noyau (kernel.js), mémoire SQLite (db.js), journal d'audit chaîné (audit.js), comptes et rôles (auth.js), import CSV
   engines/     compréhension · analyse · décision · exécution · création (documents + assistant)
   ai/          abstraction multi-fournisseurs
   modules/     registre des modules activables et packs sectoriels
@@ -77,21 +77,41 @@ fournisseur entraîne un repli signalé sur le mode local.
 - **Serveur** : écoute sur `127.0.0.1` par défaut ; refuse de s'exposer au réseau (`OMNIA_HOST`) sans `OMNIA_TOKEN` ;
   protections CSRF, DNS rebinding, CSP stricte ; webhooks refusés vers les adresses privées.
 
+### Travailler à plusieurs
+
+Sans compte, OMNIA est mono-utilisateur. Créer un premier compte (Réglages → « Travailler à plusieurs ») rend la
+connexion obligatoire ; ce compte est administrateur. Les droits se règlent ensuite espace par espace :
+
+| Rôle | Peut |
+|---|---|
+| Lecteur | consulter |
+| Membre | saisir, analyser, accepter des recommandations, demander une action |
+| Propriétaire | autoriser ou refuser les actions, gérer automatisations, réglages, membres, suppression |
+
+Un administrateur gère les comptes et accède à tous les espaces. Un espace garde toujours au moins un propriétaire.
+Le journal enregistre le nom de la personne à l'origine de chaque décision. Mots de passe hachés (scrypt), sessions
+de 7 jours en cookie `HttpOnly` / `SameSite=Strict`, verrouillage de 15 minutes après 5 échecs.
+
+Pour un accès hors de la machine, placez OMNIA derrière un proxy HTTPS et définissez `OMNIA_COOKIE_SECURE=1` :
+le serveur lui-même ne parle que HTTP.
+
 Autres variables : `OMNIA_PORT` (4747), `OMNIA_DATA_DIR` (`./data`), `OMNIA_SCHEDULER_SECONDS` (60).
 
 ## État réel de cette version
 
-**Fait et vérifié** (tests automatisés + parcours complet dans un navigateur) : espaces multiples cloisonnés, gestion
+**Fait et vérifié** (tests automatisés + parcours complet dans un navigateur) : espaces multiples cloisonnés, comptes
+utilisateurs avec rôles par espace, gestion
 des tâches et projets, finances avec import CSV, mémoire documentaire, analyse, recommandations, exécution avec
 autorisations, automatisations périodiques, journal d'audit, génération de documents et assistant en mode local,
 courbe d'évolution des indicateurs, sauvegarde et restauration d'un espace (JSON), import de fichiers texte dans la
-mémoire, tableau de bord responsive clair/sombre. Les tests s'exécutent à chaque proposition de modification (GitHub Actions).
+mémoire, tableau de bord responsive clair/sombre. Un fichier d'intégration continue est fourni, mais GitHub Actions n'a encore
+déclenché aucune exécution sur ce dépôt : les tests sont lancés à la main.
 
 **Écrit mais non vérifié en conditions réelles** : les fournisseurs d'IA externes (aucune clé disponible lors du
 développement). Le repli en cas d'échec est en place.
 
 **Pas encore fait** :
-- comptes utilisateurs et rôles (un jeton unique protège l'instance) ;
+- changement ou réinitialisation de mot de passe en libre-service, double authentification, HTTPS intégré ;
 - gestion des licences : la mention « pro » des modules décrit le positionnement prévu, rien n'est restreint ;
 - connecteurs vers des services précis (banque, messagerie, CRM, agenda) — seul le webhook générique existe ;
 - lecture de documents PDF/bureautiques, API publique documentée, sauvegarde planifiée (la sauvegarde manuelle existe,

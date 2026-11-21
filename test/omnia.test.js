@@ -197,3 +197,66 @@ test('sauvegarde : export puis restauration fidèle, automatisations remises en 
   assert.throws(() => k.importWorkspace({ ...backup, transactions: [{ date: 'x', amount: 1 }] }), /Date invalide/);
   assert.equal(k.listWorkspaces().length, before, 'un import invalide ne laisse aucun espace partiel');
 });
+
+test('comptes et rôles : connexion, cloisonnement, droits par rôle, journal nominatif', async () => {
+  const { k, config } = setup();
+  const server = createApp(config, k); await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const client = () => {
+    let jar = '';
+    return async (method, p, body) => {
+      const res = await fetch(base + p, { method, headers: { ...(method !== 'GET' ? { 'content-type': 'application/json' } : {}), ...(jar ? { cookie: jar } : {}) }, body: method !== 'GET' ? JSON.stringify(body ?? {}) : undefined });
+      const set = res.headers.get('set-cookie'); if (set) jar = set.split(';')[0];
+      return { status: res.status, body: res.status === 204 ? null : await res.json(), cookie: set };
+    };
+  };
+  const anon = client(); const admin = client(); const alice = client(); const bob = client();
+  try {
+    // Régime sans compte : tout est ouvert en local.
+    const legacy = (await anon('POST', '/api/espaces', { name: 'Avant les comptes' })).body;
+    assert.equal((await anon('GET', '/api/etat')).body.comptes, false);
+    assert.equal((await anon('POST', '/api/comptes', { name: 'Chef', email: 'chef@ex.fr', password: 'court' })).status, 400);
+    assert.equal((await anon('POST', '/api/comptes', { name: 'Chef', email: 'Chef@Ex.fr', password: 'motdepasse-long' })).body.admin, true);
+    // Dès le premier compte : plus rien sans session.
+    assert.equal((await anon('GET', '/api/espaces')).status, 401);
+    assert.equal((await anon('POST', '/api/comptes', { name: 'Intrus', email: 'i@ex.fr', password: 'motdepasse-long' })).status, 401);
+    assert.equal((await anon('POST', '/api/session', { email: 'chef@ex.fr', password: 'mauvais' })).status, 401);
+    const login = await admin('POST', '/api/session', { email: 'chef@ex.fr', password: 'motdepasse-long' });
+    assert.equal(login.status, 200); assert.match(login.cookie, /HttpOnly; SameSite=Strict/);
+    for (const [n, e] of [['Alice', 'alice@ex.fr'], ['Bob', 'bob@ex.fr']]) assert.equal((await admin('POST', '/api/comptes', { name: n, email: e, password: 'motdepasse-long' })).body.admin, false);
+    assert.equal((await admin('POST', '/api/comptes', { name: 'Double', email: 'alice@ex.fr', password: 'motdepasse-long' })).status, 409);
+    await alice('POST', '/api/session', { email: 'alice@ex.fr', password: 'motdepasse-long' });
+    await bob('POST', '/api/session', { email: 'bob@ex.fr', password: 'motdepasse-long' });
+    assert.equal((await alice('GET', '/api/comptes')).status, 403);
+    // Alice crée son espace : elle en est propriétaire, Bob ne le voit pas.
+    const w = (await alice('POST', '/api/espaces', { name: 'Espace d\'Alice' })).body;
+    assert.deepEqual((await alice('GET', '/api/espaces')).body.map((x) => [x.name, x.role]), [['Espace d\'Alice', 'proprietaire']]);
+    assert.deepEqual((await bob('GET', '/api/espaces')).body, []);
+    assert.equal((await bob('GET', `/api/espaces/${w.id}/tableau-de-bord`)).status, 404);
+    assert.equal((await alice('GET', `/api/espaces/${legacy.id}/donnees`)).status, 404);
+    assert.equal((await admin('GET', '/api/espaces')).body.length, 2, 'l\'administrateur voit tout');
+    // Lecteur : consulte seulement.
+    assert.equal((await alice('PUT', `/api/espaces/${w.id}/membres`, { email: 'bob@ex.fr', role: 'lecteur' })).status, 204);
+    assert.equal((await bob('GET', `/api/espaces/${w.id}/donnees`)).status, 200);
+    assert.equal((await bob('POST', `/api/espaces/${w.id}/taches`, { title: 'non' })).status, 403);
+    // Membre : saisit et demande, mais n'autorise pas une action sensible.
+    await alice('PUT', `/api/espaces/${w.id}/membres`, { email: 'bob@ex.fr', role: 'membre' });
+    assert.equal((await bob('POST', `/api/espaces/${w.id}/taches`, { title: 'oui' })).status, 200);
+    const pending = (await bob('POST', `/api/espaces/${w.id}/actions`, { type: 'webhook.envoyer', params: { url: 'http://10.0.0.1/x' } })).body;
+    assert.equal(pending.status, 'en_attente');
+    assert.equal((await bob('POST', `/api/espaces/${w.id}/actions/${pending.id}/approuver`)).status, 403);
+    assert.equal((await bob('PATCH', `/api/espaces/${w.id}`, { autonomy: 'manuel' })).status, 403);
+    assert.equal((await bob('PUT', `/api/espaces/${w.id}/membres`, { email: 'bob@ex.fr', role: 'proprietaire' })).status, 403);
+    assert.equal((await bob('DELETE', `/api/espaces/${w.id}`)).status, 403);
+    assert.equal((await alice('POST', `/api/espaces/${w.id}/actions/${pending.id}/refuser`)).body.status, 'refusee');
+    // Garde-fous : dernier propriétaire, journal nominatif, déconnexion.
+    assert.equal((await alice('PUT', `/api/espaces/${w.id}/membres`, { email: 'alice@ex.fr', role: 'lecteur' })).status, 400);
+    const journal = (await alice('GET', `/api/espaces/${w.id}/journal`)).body;
+    assert.ok(journal.entries.some((e) => e.actor === 'Alice' && e.event === 'action.refusee')); assert.equal(journal.integrity.ok, true);
+    assert.equal((await bob('DELETE', '/api/session')).status, 204);
+    assert.equal((await bob('GET', '/api/espaces')).status, 401);
+    // Verrouillage après échecs répétés.
+    for (let i = 0; i < 5; i += 1) await anon('POST', '/api/session', { email: 'alice@ex.fr', password: 'faux' });
+    assert.equal((await anon('POST', '/api/session', { email: 'alice@ex.fr', password: 'motdepasse-long' })).status, 429);
+  } finally { server.close(); }
+});
