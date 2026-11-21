@@ -79,8 +79,8 @@ export function createRegistry({ builtinActionTypes = [] } = {}) {
     listeners: (event, enabled) => listeners.filter((l) => l.event === event && enabled.includes(l.module)),
     // Modules proposés pour un secteur : le socle, les modules transverses et le pack adapté.
     suggest(sector) {
-      const pack = list().find((m) => m.source === 'integre' && m.sectors?.includes(sector));
-      return [...coreIds(), 'automatisations', 'connecteurs', ...(pack ? [pack.id] : [])].filter((id) => modules.has(id));
+      const packs = list().filter((m) => m.source === 'integre' && m.sectors?.includes(sector)).map((m) => m.id);
+      return [...coreIds(), 'automatisations', 'connecteurs', ...packs].filter((id) => modules.has(id));
     },
     sanitize: (ids) => [...new Set([...coreIds(), ...(Array.isArray(ids) ? ids.filter((i) => modules.has(i)) : [])])],
   };

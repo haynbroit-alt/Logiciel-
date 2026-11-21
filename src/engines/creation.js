@@ -7,6 +7,11 @@ export const TEMPLATES = {
   strategie: { title: 'Stratégie', sections: ['Ambition', 'Diagnostic', 'Axes stratégiques', 'Moyens nécessaires', 'Risques et parades', 'Jalons'] },
   rapport: { title: 'Rapport d\'activité', sections: ['Synthèse', 'Chiffres clés', 'Problèmes et risques', 'Opportunités', 'Actions menées', 'Prochaines étapes'] },
   compte_rendu: { title: 'Compte rendu', sections: ['Participants', 'Ordre du jour', 'Décisions prises', 'Actions à mener', 'Prochaine réunion'] },
+  concept: { title: 'Fiche concept', sections: ['Idée en une phrase', 'Public visé', 'Besoin ou désir auquel elle répond', 'Ce qui la distingue', 'Format et canaux', 'Ce qui reste INCONNU et comment le vérifier'] },
+  script_video: { title: 'Script vidéo', sections: ['Accroche (3 premières secondes)', 'Promesse', 'Déroulé plan par plan', 'Appel à l\'action', 'Durée et format', 'Droits : musique, images, marques'] },
+  fiche_jeu: { title: 'Fiche de conception de jeu', sections: ['Pitch', 'Boucle de jeu principale', 'Public et plateforme', 'Prototype minimal à construire', 'Modèle économique', 'Risques de production', 'Droits et propriété intellectuelle'] },
+  offre_tarif: { title: 'Offre et prix', sections: ['Ce qui est vendu', 'À qui', 'Prix et justification', 'Coûts et marge', 'Canal de vente', 'Test de commercialisation'] },
+  campagne: { title: 'Plan de campagne', sections: ['Objectif mesurable', 'Public et canaux', 'Messages', 'Calendrier', 'Budget (0 € par défaut)', 'Mesure : ventes d\'abord, audience ensuite'] },
   budget: { title: 'Budget prévisionnel', sections: ['Hypothèses', 'Revenus attendus', 'Dépenses par poste', 'Solde et marge de sécurité', 'Mesures d\'ajustement'] },
 };
 
@@ -33,7 +38,7 @@ function facts(ctx) {
 export function generateLocally(template, brief, ctx) {
   const t = TEMPLATES[template]; const f = facts(ctx); const todo = '_À compléter._';
   const fill = {
-    Objectif: brief || f.objectifs, Ambition: brief || f.objectifs, 'Situation actuelle': f.chiffres, 'Chiffres clés': f.chiffres, Diagnostic: `${f.chiffres}\n\n${f.constats(['probleme', 'risque'])}`,
+    Objectif: String(brief ?? '').split('\n')[0] || f.objectifs, Ambition: String(brief ?? '').split('\n')[0] || f.objectifs, 'Situation actuelle': f.chiffres, 'Chiffres clés': f.chiffres, Diagnostic: `${f.chiffres}\n\n${f.constats(['probleme', 'risque'])}`,
     'Actions prioritaires': f.actions, 'Prochaines étapes': f.actions, 'Actions à mener': f.actions, 'Axes stratégiques': f.actions, 'Mesures d\'ajustement': f.actions,
     'Problèmes et risques': f.constats(['probleme', 'risque']), 'Risques et parades': f.constats(['risque']), Opportunités: f.constats(['opportunite']),
     'Dépenses par poste': f.postes, 'Revenus attendus': `- Référence, 30 derniers jours : ${fmt(ctx.kpis.revenus_30j)} ${ctx.workspace.currency}\n${todo}`,
@@ -42,13 +47,14 @@ export function generateLocally(template, brief, ctx) {
     'Actions menées': ctx.executedActions.length ? ctx.executedActions.map((a) => `- ${a.type} (${a.status}) le ${a.executed_at?.slice(0, 10) ?? '—'}`).join('\n') : '_Aucune action exécutée sur la période._',
   };
   const body = t.sections.map((s) => `## ${s}\n\n${fill[s] ?? todo}`).join('\n\n');
-  return `# ${t.title}${brief ? ` — ${brief}` : ''}\n\n_${ctx.workspace.name} · ${new Date().toISOString().slice(0, 10)}_\n\n${body}\n`;
+  const [head, ...context] = String(brief ?? '').split('\n');
+  return `# ${t.title}${head ? ` — ${head}` : ''}\n\n${context.length ? `${context.map((l) => `- ${l}`).join('\n')}\n\n` : ''}_${ctx.workspace.name} · ${new Date().toISOString().slice(0, 10)}_\n\n${body}\n`;
 }
 
 export async function generateDocument(ai, template, brief, ctx) {
   if (!TEMPLATES[template]) throw new Error(`Modèle de document inconnu : ${template}`);
   const draft = generateLocally(template, brief, ctx);
-  const title = `${TEMPLATES[template].title}${brief ? ` — ${brief}` : ''}`.slice(0, 160);
+  const title = `${TEMPLATES[template].title}${brief ? ` — ${brief.split('\n')[0]}` : ''}`.slice(0, 160);
   if (!ai.generative) return { title, content: draft, source: 'local' };
   try {
     const { text, provider, model } = await ai.complete({

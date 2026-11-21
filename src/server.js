@@ -44,6 +44,7 @@ function requiredRole(method, pathname) {
   if (/\/automatisations(\/\d+)?$/.test(pathname) && method !== 'GET') return 'proprietaire';
   return method === 'GET' ? 'lecteur' : 'membre';
 }
+const studioWs = (k, p) => { const w = k.workspace(p.ws); if (!w.modules.includes('studio')) throw new OmniaError('Le module Studio n\'est pas activé pour cet espace', 409); return w.id; };
 const own = (k, c, w) => { if (c.user) k.auth.setMember(w.id, { userId: c.user.id, role: 'proprietaire' }); return w; };
 
 const ROUTES = [
@@ -68,6 +69,15 @@ const ROUTES = [
   ['GET', '/api/espaces/:ws/acces', (k, p) => k.hub.listTokens(k.workspace(p.ws).id)],
   ['POST', '/api/espaces/:ws/acces', (k, p, b) => k.hub.issueToken(k.workspace(p.ws).id, b.usage)],
   ['POST', '/api/espaces/:ws/acces/revoquer', (k, p, b) => k.hub.revokeToken(k.workspace(p.ws).id, b.usage)],
+  ['GET', '/api/espaces/:ws/studio', (k, p) => k.studio.overview(studioWs(k, p))],
+  ['POST', '/api/espaces/:ws/studio/projets', (k, p, b) => k.studio.createProject(studioWs(k, p), b)],
+  ['PATCH', '/api/espaces/:ws/studio/projets/:id', (k, p, b) => k.studio.updateProject(studioWs(k, p), p.id, b)],
+  ['DELETE', '/api/espaces/:ws/studio/projets/:id', (k, p) => k.studio.remove(studioWs(k, p), p.id)],
+  ['POST', '/api/espaces/:ws/studio/projets/:id/preuves', (k, p, b) => k.studio.addEvidence(studioWs(k, p), p.id, b)],
+  ['DELETE', '/api/espaces/:ws/studio/preuves/:id', (k, p) => k.studio.removeEvidence(studioWs(k, p), p.id)],
+  ['POST', '/api/espaces/:ws/studio/projets/:id/avancer', (k, p) => k.studio.advance(studioWs(k, p), p.id)],
+  ['POST', '/api/espaces/:ws/studio/projets/:id/encaissements', (k, p, b) => k.studio.recordSale(studioWs(k, p), p.id, b)],
+  ['POST', '/api/espaces/:ws/studio/projets/:id/generer', (k, p, b) => k.generateForStudio(studioWs(k, p), p.id, b.template)],
   ['GET', '/api/meta', (k) => k.meta()],
   ['GET', '/api/noyau', (k) => k.describe()],
   ['GET', '/api/espaces', (k, p, b, c) => {

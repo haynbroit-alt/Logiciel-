@@ -15,6 +15,7 @@ import { createRegistry, ModuleError } from './registry.js';
 import { createEvents, EVENTS } from './events.js';
 import { createConnectors } from '../connectors/index.js';
 import { createHub, CHANNEL_TYPES, TOKEN_PURPOSES } from '../connectors/hub.js';
+import { createStudio } from '../studio/studio.js';
 
 export class OmniaError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
@@ -76,7 +77,7 @@ export function createKernel({ db, ai, config }) {
   function deleteWorkspace(id) {
     const w = workspace(id);
     db.tx(() => {
-      for (const t of ['projects', 'tasks', 'transactions', 'documents', 'insights', 'recommendations', 'actions', 'automations', 'rule_weights', 'metrics', 'memberships', 'channels', 'access_tokens']) {
+      for (const t of ['projects', 'tasks', 'transactions', 'documents', 'insights', 'recommendations', 'actions', 'automations', 'rule_weights', 'metrics', 'memberships', 'channels', 'access_tokens', 'studio_projects', 'studio_evidence']) {
         db.run(`DELETE FROM ${t} WHERE workspace_id = ?`, w.id);
       }
       db.run('DELETE FROM workspaces WHERE id = ?', w.id);
@@ -170,6 +171,8 @@ export function createKernel({ db, ai, config }) {
     transactions: db.all('SELECT * FROM transactions WHERE workspace_id = ? ORDER BY date DESC, id DESC', wsId),
     documents: db.all('SELECT * FROM documents WHERE workspace_id = ? ORDER BY id DESC', wsId),
   });
+  // Données soumises aux règles d'analyse : celles de l'espace, plus l'état du studio.
+  const analysisData = (wsId) => { const projects = studio.list(wsId); return { ...data(wsId), studio: { projects, autofinancement: studio.selfFunding(projects) } }; };
   const insightRow = (i) => ({ ...i, evidence: parseJson(i.evidence, {}), ruleLabel: registry.rule(i.rule)?.label ?? i.rule });
   const recRow = (r) => ({ ...r, options: parseJson(r.options, []) });
   const openInsights = (wsId) => db.all("SELECT * FROM insights WHERE workspace_id = ? AND status = 'ouvert' ORDER BY severity DESC, id DESC", wsId).map(insightRow);
@@ -201,7 +204,7 @@ export function createKernel({ db, ai, config }) {
   }
 
   function runAnalysis(wsId, actor = 'utilisateur') {
-    const w = workspace(wsId); const d = data(w.id); const date = clock();
+    const w = workspace(wsId); const d = analysisData(w.id); const date = clock();
     const { findings, errors: ruleErrors } = analyze(d, { date, rules: registry.rulesFor(w.modules) });
     const failed = new Set(ruleErrors.map((e) => e.rule)); const fresh = []; const gone = [];
     const seen = new Set(); let created = 0; let resolved = 0;
@@ -283,8 +286,8 @@ export function createKernel({ db, ai, config }) {
       executedActions: db.all("SELECT type, status, executed_at FROM actions WHERE workspace_id = ? AND executed_at IS NOT NULL ORDER BY id DESC LIMIT 15", wsId) };
   }
 
-  async function generate(wsId, template, brief) {
-    const out = await generateDocument(ai, template, text(brief, 500), context(wsId)).catch((e) => { throw new OmniaError(e.message); });
+  async function generate(wsId, template, brief, max = 500) {
+    const out = await generateDocument(ai, template, text(brief, max), context(wsId)).catch((e) => { throw new OmniaError(e.message); });
     const doc = createDocument(wsId, { title: out.title, kind: template, content: out.content, origin: 'omnia' });
     audit.record({ workspaceId: wsId, actor: 'omnia', event: 'document.genere', entity: 'document', entityId: doc.id, detail: { template, source: out.source, fallbackReason: out.fallbackReason } });
     return { ...doc, source: out.source, fallbackReason: out.fallbackReason };
@@ -338,6 +341,7 @@ export function createKernel({ db, ai, config }) {
         return hub.sendToChannel(wsId, { channelId: p.channelId, text, extra });
       },
       importStripe: (wsId, days) => hub.importStripe(workspace(wsId), days),
+      studioSpend(wsId, p) { need(workspace(wsId).modules.includes('studio'), 'Le module Studio n\'est pas activé pour cet espace'); return studio.spend(wsId, p); },
       postWebhook(wsId, p) {
         const w = workspace(wsId);
         const payload = { source: 'OMNIA', espace: w.name, envoye_le: now(), message: p.message };
@@ -348,6 +352,10 @@ export function createKernel({ db, ai, config }) {
   });
 
   const hub = createHub({ db, audit, config, fail: (m, s) => { throw new OmniaError(m, s); }, services: { createTask, createTransaction, createDocument } });
+
+  const studio = createStudio({ db, audit, fail: (m, s) => { throw new OmniaError(m, s); }, services: { createTransaction } });
+  // Document du studio : le brief ne contient que ce qui a été saisi sur le projet.
+  async function generateForStudio(wsId, projectId, template) { const b = studio.brief(wsId, projectId); return generate(wsId, template, `${b.name}\n${b.text}`, 1500); }
 
   async function acceptRecommendation(wsId, id, optionIndex) {
     const w = workspace(wsId);
@@ -517,7 +525,7 @@ export function createKernel({ db, ai, config }) {
   }
 
   return {
-    audit, auth, execution, connectors, hub, ai, registry, events, processEvents,
+    audit, auth, execution, connectors, hub, studio, generateForStudio, ai, registry, events, processEvents,
     // Enregistre un module auprès du noyau (modules externes chargés au démarrage, ou par programme).
     registerModule(mod, source = 'externe') {
       try { const m = registry.register(mod, { source }); audit.record({ actor: 'omnia', event: 'module.enregistre', entity: 'module', detail: { id: m.id, source, regles: m.rules.length, actions: m.actions.length } }); return m; }

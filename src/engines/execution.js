@@ -24,7 +24,7 @@ const day = (v, name) => {
   return v;
 };
 
-export const BUILTIN_ACTION_TYPES = ['operation.enregistrer', 'tache.creer', 'tache.modifier_lot', 'tache.prioriser_projet', 'document.generer', 'email.brouillon', 'export.csv', 'analyse.lancer', 'message.envoyer', 'stripe.importer', 'webhook.envoyer'];
+export const BUILTIN_ACTION_TYPES = ['studio.engager_depense', 'operation.enregistrer', 'tache.creer', 'tache.modifier_lot', 'tache.prioriser_projet', 'document.generer', 'email.brouillon', 'export.csv', 'analyse.lancer', 'message.envoyer', 'stripe.importer', 'webhook.envoyer'];
 
 export function createExecution({ db, audit, services, registry, events, moduleApi }) {
   const TYPES = {
@@ -40,6 +40,16 @@ export function createExecution({ db, audit, services, registry, events, moduleA
         return out;
       },
       run: (ws, { due_in_days, sans_echeance, ...p }) => ({ taskId: services.createTask(ws.id, { ...p, due_date: p.due_date ?? (sans_echeance ? null : services.inDays(due_in_days)), origin: 'omnia' }).id }),
+    },
+    // Tout engagement financier du studio exige une autorisation humaine, même couvert par les bénéfices.
+    'studio.engager_depense': {
+      label: 'Engager une dépense du studio', sensitivity: 'sensible',
+      validate: (p) => {
+        const amount = Number(p.amount);
+        if (!Number.isFinite(amount) || amount <= 0 || amount >= 1e9) throw new Error('Paramètre « amount » invalide');
+        return { projectId: int(p.projectId, 'projectId', 1, Number.MAX_SAFE_INTEGER), amount: Math.round(amount * 100) / 100, label: str(p.label, 'label', 300), category: typeof p.category === 'string' ? p.category.trim().slice(0, 80) : '' };
+      },
+      run: (ws, p) => services.studioSpend(ws.id, p),
     },
     'operation.enregistrer': {
       label: 'Enregistrer une opération financière', sensitivity: 'interne',

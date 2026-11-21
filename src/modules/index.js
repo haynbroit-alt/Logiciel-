@@ -3,10 +3,12 @@
 // de licence n'est appliquée dans cette version : tous les modules sont utilisables.
 import gestion from './gestion.js';
 import finances from './finances.js';
+import studio from './studio.js';
 
 export const BUILTIN_MODULES = [
   gestion,
   finances,
+  studio,
   { id: 'memoire', name: 'Mémoire', tier: 'gratuit', core: true, description: 'Documents, notes et connaissance de l\'activité.' },
   { id: 'creation', name: 'Création', tier: 'gratuit', core: true, description: 'Plans d\'action, offres, stratégies et rapports.' },
   { id: 'automatisations', name: 'Automatisations', tier: 'pro', description: 'Tâches répétitives exécutées à intervalle régulier.' },
