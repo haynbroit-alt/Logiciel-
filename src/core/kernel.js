@@ -379,11 +379,68 @@ export function createKernel({ db, ai, config }) {
     return m.starterTasks.map((title) => createTask(w.id, { title, due_date: inDays(14), origin: 'omnia' }));
   }
 
+  // ---------- Sauvegarde et portabilité ----------
+  // L'export contient les données saisies ; constats, recommandations et actions se recalculent,
+  // et le journal d'audit reste attaché à l'instance d'origine.
+  function exportWorkspace(id) {
+    const w = workspace(id); const d = data(w.id);
+    audit.record({ workspaceId: w.id, event: 'espace.exporte', entity: 'espace', entityId: w.id, detail: {} });
+    return {
+      format: 'omnia-espace', version: 1, exported_at: now(),
+      workspace: { name: w.name, description: w.description, kind: w.kind, sector: w.sector, goals: w.goals, modules: w.modules, autonomy: w.autonomy, currency: w.currency },
+      projects: d.projects.map(({ id: pid, name, goal, status, deadline }) => ({ id: pid, name, goal, status, deadline })),
+      tasks: d.tasks.map(({ project_id, title, notes, status, priority, due_date, origin, created_at, done_at }) => ({ project_id, title, notes, status, priority, due_date, origin, created_at, done_at })),
+      transactions: d.transactions.map(({ date, amount, category, label, counterparty }) => ({ date, amount, category, label, counterparty })),
+      documents: d.documents.map(({ title, kind, content, origin, created_at }) => ({ title, kind, content, origin, created_at })),
+      automations: listAutomations(w.id).map(({ name, every_minutes, action_type, params, enabled }) => ({ name, every_minutes, action_type, params, enabled })),
+    };
+  }
+
+  function importWorkspace(payload) {
+    need(payload?.format === 'omnia-espace' && payload.version === 1 && payload.workspace, 'Ce fichier n\'est pas une sauvegarde OMNIA reconnue');
+    const list = (v) => { need(v === undefined || Array.isArray(v), 'Sauvegarde invalide'); return v ?? []; };
+    const src = payload.workspace; const name = text(src.name, 120); need(name, 'Sauvegarde invalide : nom manquant');
+    const stamp = (v) => (typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? new Date(v).toISOString() : null);
+    const counts = {};
+    const id = db.tx(() => {
+      const wsId = db.insert('INSERT INTO workspaces (name, description, kind, sector, goals, modules, autonomy, currency, profile_source, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        name, text(src.description, 5000), KINDS.includes(src.kind) ? src.kind : 'entreprise', SECTORS.includes(src.sector) ? src.sector : 'general',
+        JSON.stringify(list(src.goals).map((g) => text(g, 200)).filter(Boolean).slice(0, 10)), JSON.stringify(sanitizeModules(src.modules)),
+        src.autonomy === 'manuel' ? 'manuel' : 'assiste', text(src.currency, 8) || 'EUR', 'import', now());
+      const projectIds = new Map();
+      for (const p of list(payload.projects)) {
+        const created = createProject(wsId, p); projectIds.set(p.id, created.id);
+        if (['termine', 'en_pause'].includes(p.status)) db.run('UPDATE projects SET status = ? WHERE id = ?', p.status, created.id);
+      }
+      for (const t of list(payload.tasks)) {
+        const created = createTask(wsId, { ...t, project_id: projectIds.get(t.project_id) ?? null });
+        db.run('UPDATE tasks SET created_at = COALESCE(?, created_at), done_at = CASE WHEN status = \'fait\' THEN COALESCE(?, done_at) ELSE NULL END WHERE id = ?', stamp(t.created_at), stamp(t.done_at), created.id);
+      }
+      for (const x of list(payload.transactions)) createTransaction(wsId, x);
+      for (const x of list(payload.documents)) {
+        const created = createDocument(wsId, x);
+        db.run('UPDATE documents SET created_at = COALESCE(?, created_at) WHERE id = ?', stamp(x.created_at), created.id);
+      }
+      // Les automatisations sont restaurées en pause et sans autorisation permanente :
+      // une sauvegarde ne doit jamais réactiver seule des actions.
+      for (const a of list(payload.automations)) {
+        const every = Number(a.every_minutes);
+        if (!execution.sensitivityOf(a.action_type) || !Number.isInteger(every) || every < 5 || every > 525600 || !text(a.name, 120)) continue;
+        db.run('INSERT INTO automations (workspace_id, name, every_minutes, action_type, params, enabled, created_at) VALUES (?,?,?,?,?,0,?)', wsId, text(a.name, 120), every, a.action_type, JSON.stringify(a.params ?? {}), now());
+        counts.automatisations = (counts.automatisations ?? 0) + 1;
+      }
+      Object.assign(counts, { projets: list(payload.projects).length, taches: list(payload.tasks).length, operations: list(payload.transactions).length, documents: list(payload.documents).length });
+      return wsId;
+    });
+    audit.record({ workspaceId: id, event: 'espace.importe', entity: 'espace', entityId: id, detail: counts });
+    return { ...workspace(id), imported: counts };
+  }
+
   return {
     audit, execution, connectors, ai,
     meta: () => ({ modules: MODULES, kinds: KINDS, sectors: SECTORS, templates: Object.entries(TEMPLATES).map(([id, t]) => ({ id, title: t.title })), actionTypes: execution.types(), connectors: connectors.list(), ai: { provider: ai.provider, model: ai.model, generative: ai.generative } }),
     listWorkspaces: () => db.all('SELECT * FROM workspaces ORDER BY id').map(wsRow),
-    workspace, createWorkspace, updateWorkspace, deleteWorkspace,
+    workspace, createWorkspace, updateWorkspace, deleteWorkspace, exportWorkspace, importWorkspace,
     data, createProject, updateProject, deleteProject, createTask, deleteTask,
     updateTask(wsId, id, patch) { const t = updateTask(wsId, id, patch); need(t, 'Tâche introuvable', 404); return t; },
     createTransaction, importTransactions, deleteTransaction, createDocument, deleteDocument,
