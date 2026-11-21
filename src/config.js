@@ -10,6 +10,7 @@ export function loadConfig(overrides = {}) {
     host: env.OMNIA_HOST ?? '127.0.0.1',
     port: Number(env.OMNIA_PORT ?? 4747),
     token: env.OMNIA_TOKEN ?? '',
+    stripeKey: env.OMNIA_STRIPE_KEY ?? '',
     cookieSecure: env.OMNIA_COOKIE_SECURE === '1',
     dataDir,
     dbPath: overrides.dbPath ?? env.OMNIA_DB ?? path.join(dataDir, 'omnia.db'),

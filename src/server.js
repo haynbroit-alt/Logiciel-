@@ -38,7 +38,7 @@ function readBody(req) {
 const id = (v) => { const n = Number(v); if (!Number.isInteger(n) || n <= 0) throw new OmniaError('Identifiant invalide'); return n; };
 // Rôle minimal exigé dans un espace lorsque les comptes sont activés.
 function requiredRole(method, pathname) {
-  if (/\/membres(\/\d+)?$/.test(pathname)) return 'proprietaire';
+  if (/\/(membres|canaux|acces)(\/\w+)?$/.test(pathname) && !(method === 'GET' && /\/canaux$/.test(pathname))) return 'proprietaire';
   if (/^\/api\/espaces\/\d+$/.test(pathname) && method !== 'GET') return 'proprietaire';
   if (/\/actions\/\d+\/(approuver|refuser)$/.test(pathname)) return 'proprietaire';
   if (/\/automatisations(\/\d+)?$/.test(pathname) && method !== 'GET') return 'proprietaire';
@@ -59,6 +59,15 @@ const ROUTES = [
   // Le premier compte créé devient administrateur et active le régime des comptes.
   ['POST', '/api/comptes', (k, p, b, c) => k.auth.createUser(b, { admin: !c.accounts || b.admin === true }), 'admin'],
   ['DELETE', '/api/comptes/:id', (k, p, b, c) => k.auth.removeUser(p.id, c.user?.id), 'admin'],
+  // Accès par jeton, sans session : entrée de données depuis un outil tiers et abonnement calendrier.
+  ['POST', '/api/entrant/:jeton', (k, p, b) => k.hub.inbound(p.jeton, b), 'public'],
+  ['GET', '/api/calendrier/:jeton', (k, p) => ({ __raw: { type: 'text/calendar; charset=utf-8', body: k.hub.calendar(p.jeton) } }), 'public'],
+  ['GET', '/api/espaces/:ws/canaux', (k, p) => k.hub.listChannels(k.workspace(p.ws).id)],
+  ['POST', '/api/espaces/:ws/canaux', (k, p, b) => k.hub.createChannel(k.workspace(p.ws).id, b)],
+  ['DELETE', '/api/espaces/:ws/canaux/:id', (k, p) => k.hub.deleteChannel(k.workspace(p.ws).id, p.id)],
+  ['GET', '/api/espaces/:ws/acces', (k, p) => k.hub.listTokens(k.workspace(p.ws).id)],
+  ['POST', '/api/espaces/:ws/acces', (k, p, b) => k.hub.issueToken(k.workspace(p.ws).id, b.usage)],
+  ['POST', '/api/espaces/:ws/acces/revoquer', (k, p, b) => k.hub.revokeToken(k.workspace(p.ws).id, b.usage)],
   ['GET', '/api/meta', (k) => k.meta()],
   ['GET', '/api/espaces', (k, p, b, c) => {
     const all = k.listWorkspaces();
@@ -107,7 +116,7 @@ const ROUTES = [
   ['GET', '/api/espaces/:ws/journal', (k, p) => ({ entries: k.audit.list(k.workspace(p.ws).id), integrity: k.audit.verify() })],
 ].map(([method, pattern, handler, access]) => {
   const names = [];
-  const regex = new RegExp(`^${pattern.replace(/:(\w+)/g, (_, n) => { names.push(n); return '(\\d+)'; })}$`);
+  const regex = new RegExp(`^${pattern.replace(/:(\w+)/g, (_, n) => { names.push(n); return n === 'jeton' ? '([A-Za-z0-9_-]{20,80})(?:\\.ics)?' : '(\\d+)'; })}$`);
   return { method, regex, names, handler, access };
 });
 
@@ -131,7 +140,8 @@ export function createApp(config, kernel) {
     // Deux régimes : sans compte, accès local ou par jeton ; avec comptes, session et rôles.
     const accounts = kernel.auth.enabled();
     const user = accounts ? kernel.auth.userForToken(sessionToken(req)) : null;
-    if (!accounts && !tokenOk(req)) return send(res, 401, { error: 'Jeton d\'accès requis' });
+    const byAccessToken = /^\/api\/(entrant|calendrier)\//.test(url.pathname); // ces routes portent leur propre jeton
+    if (!accounts && !byAccessToken && !tokenOk(req)) return send(res, 401, { error: 'Jeton d\'accès requis' });
     if (req.method !== 'GET') {
       // Protection CSRF : JSON obligatoire, et l'origine, si le navigateur en envoie une, doit être la nôtre.
       if (!(req.headers['content-type'] ?? '').startsWith('application/json')) return send(res, 415, { error: 'Content-Type application/json requis' });
@@ -142,7 +152,7 @@ export function createApp(config, kernel) {
       if (r.method !== req.method) continue;
       const m = url.pathname.match(r.regex);
       if (!m) continue;
-      const params = Object.fromEntries(r.names.map((n, i) => [n, id(m[i + 1])]));
+      const params = Object.fromEntries(r.names.map((n, i) => [n, n === 'jeton' ? m[i + 1] : id(m[i + 1])]));
       if (accounts) {
         if (r.access !== 'public' && !user) return send(res, 401, { error: 'Connexion requise', comptes: true });
         if (r.access === 'admin' && !user.admin) return send(res, 403, { error: 'Réservé aux administrateurs' });
@@ -156,6 +166,7 @@ export function createApp(config, kernel) {
       const body = req.method === 'GET' ? {} : await readBody(req);
       const ctx = { accounts, user, headers: {}, sessionToken: sessionToken(req), clientKey: req.socket.remoteAddress ?? '', cookie };
       const out = await requestContext.run({ actor: user?.name }, () => r.handler(kernel, params, body, ctx));
+      if (out?.__raw) { res.writeHead(200, { 'content-type': out.__raw.type, 'cache-control': 'no-store', ...SECURITY_HEADERS }); return res.end(out.__raw.body); }
       return send(res, out === undefined ? 204 : 200, out, ctx.headers);
     }
     return send(res, 404, { error: 'Ressource introuvable' });
@@ -190,7 +201,7 @@ export function createApp(config, kernel) {
 export function start(overrides = {}) {
   const config = loadConfig(overrides);
   const db = openDb(config.dbPath);
-  const kernel = createKernel({ db, ai: createAI(config.ai), config });
+  const kernel = createKernel({ db, ai: createAI(config.ai, process.env), config });
   if (!isLoopback(config.host) && !config.token && !kernel.auth.enabled()) {
     db.close();
     throw new Error('Refus de démarrer : OMNIA_HOST expose le serveur au réseau sans protection. Définissez OMNIA_TOKEN, ou créez d\'abord un compte en accès local.');

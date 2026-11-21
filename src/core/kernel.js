@@ -11,6 +11,7 @@ import { createExecution } from '../engines/execution.js';
 import { generateDocument, answer, TEMPLATES } from '../engines/creation.js';
 import { MODULES, moduleById, suggestModules, sanitizeModules } from '../modules/index.js';
 import { createConnectors } from '../connectors/index.js';
+import { createHub, CHANNEL_TYPES, TOKEN_PURPOSES } from '../connectors/hub.js';
 
 export class OmniaError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
@@ -68,7 +69,7 @@ export function createKernel({ db, ai, config }) {
   function deleteWorkspace(id) {
     const w = workspace(id);
     db.tx(() => {
-      for (const t of ['projects', 'tasks', 'transactions', 'documents', 'insights', 'recommendations', 'actions', 'automations', 'rule_weights', 'metrics', 'memberships']) {
+      for (const t of ['projects', 'tasks', 'transactions', 'documents', 'insights', 'recommendations', 'actions', 'automations', 'rule_weights', 'metrics', 'memberships', 'channels', 'access_tokens']) {
         db.run(`DELETE FROM ${t} WHERE workspace_id = ?`, w.id);
       }
       db.run('DELETE FROM workspaces WHERE id = ?', w.id);
@@ -287,6 +288,16 @@ export function createKernel({ db, ai, config }) {
           ? connectors.exportCsv({ workspaceId: wsId, dataset, rows: d.tasks, columns: ['id', 'title', 'status', 'priority', 'due_date', 'project_id', 'created_at', 'done_at'] })
           : connectors.exportCsv({ workspaceId: wsId, dataset, rows: d.transactions, columns: ['id', 'date', 'amount', 'category', 'label', 'counterparty'] });
       },
+      sendMessage(wsId, p) {
+        const extra = { espace: workspace(wsId).name, envoye_le: now() };
+        let text = p.text;
+        if (p.include === 'indicateurs') {
+          const k = computeKpis(data(wsId), clock()); extra.indicateurs = k;
+          text = `${text}\n${Object.entries(k).map(([key, v]) => `• ${key.replace(/_/g, ' ')} : ${v}`).join('\n')}`.trim();
+        }
+        return hub.sendToChannel(wsId, { channelId: p.channelId, text, extra });
+      },
+      importStripe: (wsId, days) => hub.importStripe(workspace(wsId), days),
       postWebhook(wsId, p) {
         const w = workspace(wsId);
         const payload = { source: 'OMNIA', espace: w.name, envoye_le: now(), message: p.message };
@@ -295,6 +306,8 @@ export function createKernel({ db, ai, config }) {
       },
     },
   });
+
+  const hub = createHub({ db, audit, config, fail: (m, s) => { throw new OmniaError(m, s); }, services: { createTask, createTransaction, createDocument } });
 
   async function acceptRecommendation(wsId, id, optionIndex) {
     const w = workspace(wsId);
@@ -439,8 +452,8 @@ export function createKernel({ db, ai, config }) {
   }
 
   return {
-    audit, auth, execution, connectors, ai,
-    meta: () => ({ modules: MODULES, kinds: KINDS, sectors: SECTORS, templates: Object.entries(TEMPLATES).map(([id, t]) => ({ id, title: t.title })), actionTypes: execution.types(), connectors: connectors.list(), ai: { provider: ai.provider, model: ai.model, generative: ai.generative } }),
+    audit, auth, execution, connectors, hub, ai,
+    meta: () => ({ modules: MODULES, kinds: KINDS, sectors: SECTORS, templates: Object.entries(TEMPLATES).map(([id, t]) => ({ id, title: t.title })), actionTypes: execution.types(), connectors: connectors.list(), channelTypes: Object.entries(CHANNEL_TYPES).map(([id, t]) => ({ id, label: t.label })), tokenPurposes: TOKEN_PURPOSES, stripe: hub.stripeConfigured(), ai: { provider: ai.provider, model: ai.model, generative: ai.generative } }),
     listWorkspaces: () => db.all('SELECT * FROM workspaces ORDER BY id').map(wsRow),
     workspace, createWorkspace, updateWorkspace, deleteWorkspace, exportWorkspace, importWorkspace,
     data, createProject, updateProject, deleteProject, createTask, deleteTask,

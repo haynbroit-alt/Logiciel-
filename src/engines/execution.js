@@ -77,6 +77,20 @@ export function createExecution({ db, audit, services }) {
       label: 'Lancer une analyse', sensitivity: 'interne', validate: () => ({}),
       run: (ws, _p, actor) => { const r = services.runAnalysis(ws.id, actor); return { constats: r.insights.length, nouveaux: r.created, resolus: r.resolved }; },
     },
+    'message.envoyer': {
+      label: 'Envoyer un message sur un canal', sensitivity: 'sensible',
+      validate: (p) => {
+        const include = p.include ?? 'aucun';
+        if (!['aucun', 'indicateurs'].includes(include)) throw new Error('Paramètre « include » invalide');
+        return { channelId: int(p.channelId, 'channelId', 1, Number.MAX_SAFE_INTEGER), text: str(p.text, 'text', 3000), include };
+      },
+      run: (ws, p) => services.sendMessage(ws.id, p),
+    },
+    'stripe.importer': {
+      label: 'Importer les mouvements Stripe', sensitivity: 'interne',
+      validate: (p) => ({ days: int(p.days, 'days', 1, 365, 30) }),
+      run: (ws, p) => services.importStripe(ws.id, p.days),
+    },
     'webhook.envoyer': {
       label: 'Envoyer des données à un service externe', sensitivity: 'sensible',
       validate: (p) => {

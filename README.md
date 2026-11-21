@@ -6,7 +6,7 @@ Un seul logiciel, tous les secteurs : OMNIA transforme les besoins, problèmes e
 (entreprise, commerce, indépendant, association, collectivité, particulier) en constats chiffrés,
 en recommandations comparées et en actions concrètes — exécutées uniquement avec votre accord.
 
-> Version 0.3 — socle fonctionnel. La section [État réel](#état-réel-de-cette-version) dit précisément ce qui est fait et ce qui ne l'est pas.
+> Version 0.4 — socle fonctionnel. La section [État réel](#état-réel-de-cette-version) dit précisément ce qui est fait et ce qui ne l'est pas.
 
 ## Démarrer
 
@@ -15,7 +15,7 @@ Prérequis : Node.js ≥ 22.13. Aucune dépendance à installer, aucun compte, a
 ```bash
 npm run demo    # facultatif : crée un espace d'exemple (atelier de menuiserie)
 npm start       # http://localhost:4747
-npm test        # 14 tests
+npm test        # 18 tests
 ```
 
 Les données restent sur votre machine, dans `data/omnia.db` (SQLite).
@@ -66,6 +66,24 @@ fournisseur entraîne un repli signalé sur le mode local.
 
 `OMNIA_AI_MODEL` remplace le modèle par défaut. Les clés ne sont lues que dans l'environnement, jamais stockées.
 
+**Plusieurs fournisseurs à la fois** : `OMNIA_AI_PROVIDER=ollama,mistral` les essaie dans l'ordre et passe au suivant
+en cas d'échec. Chacun lit alors ses propres réglages (`OMNIA_AI_MISTRAL_API_KEY`, `OMNIA_AI_OLLAMA_MODEL`…) ; la clé
+de l'un n'est jamais envoyée à l'autre.
+
+## Connexions
+
+| Connexion | Sens | Détail |
+|---|---|---|
+| Slack, Discord, Microsoft Teams, webhook générique | sortant | Canaux nommés par espace ; chaque envoi est une action sensible soumise à autorisation |
+| Entrée de données | entrant | Une adresse à jeton pour créer tâches, opérations et notes depuis Zapier, n8n, Make ou un script |
+| Calendrier | sortant, lecture seule | Abonnement iCalendar aux échéances (Google Agenda, Outlook, Apple) |
+| Stripe | entrant, lecture seule | Import des mouvements de solde ; nécessite `OMNIA_STRIPE_KEY` (clé restreinte) |
+| Export CSV, brouillon d'e-mail | local | Fichiers et brouillons, rien n'est envoyé |
+
+Les adresses à jeton ne sont affichées qu'une fois ; seule leur empreinte est conservée, et elles se régénèrent ou se
+révoquent depuis l'écran Connexions. Quiconque détient l'adresse d'entrée peut écrire dans l'espace : traitez-la
+comme un mot de passe.
+
 ## Sécurité et contrôle
 
 - **Aucune action sensible sans autorisation.** Tout envoi hors d'OMNIA (webhook) attend une approbation explicite,
@@ -107,13 +125,15 @@ courbe d'évolution des indicateurs, sauvegarde et restauration d'un espace (JSO
 mémoire, tableau de bord responsive clair/sombre. Un fichier d'intégration continue est fourni, mais GitHub Actions n'a encore
 déclenché aucune exécution sur ce dépôt : les tests sont lancés à la main.
 
-**Écrit mais non vérifié en conditions réelles** : les fournisseurs d'IA externes (aucune clé disponible lors du
-développement). Le repli en cas d'échec est en place.
+**Écrit mais non vérifié en conditions réelles** : les fournisseurs d'IA externes, l'import Stripe et les envois
+vers Slack, Discord et Teams. Ils sont testés contre des réponses simulées, pas contre les vrais services
+(aucune clé ni canal réel utilisé lors du développement). Les webhooks Teams de type « Workflows » attendent un
+autre format que celui envoyé ici.
 
 **Pas encore fait** :
 - changement ou réinitialisation de mot de passe en libre-service, double authentification, HTTPS intégré ;
 - gestion des licences : la mention « pro » des modules décrit le positionnement prévu, rien n'est restreint ;
-- connecteurs vers des services précis (banque, messagerie, CRM, agenda) — seul le webhook générique existe ;
+- connecteurs demandant une connexion OAuth (banque, messagerie électronique, CRM, agenda en écriture) ;
 - lecture de documents PDF/bureautiques, API publique documentée, sauvegarde planifiée (la sauvegarde manuelle existe,
   son fichier n'est pas chiffré) ;
 - chiffrement de la base au repos (à assurer par le système hôte).
