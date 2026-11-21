@@ -20,7 +20,9 @@ const ids = (v, name) => {
 };
 const STATUSES = ['a_faire', 'en_cours', 'fait'];
 
-export function createExecution({ db, audit, services }) {
+export const BUILTIN_ACTION_TYPES = ['tache.creer', 'tache.modifier_lot', 'tache.prioriser_projet', 'document.generer', 'email.brouillon', 'export.csv', 'analyse.lancer', 'message.envoyer', 'stripe.importer', 'webhook.envoyer'];
+
+export function createExecution({ db, audit, services, registry, events, moduleApi }) {
   const TYPES = {
     'tache.creer': {
       label: 'Créer une tâche', sensitivity: 'interne',
@@ -106,33 +108,42 @@ export function createExecution({ db, audit, services }) {
     },
   };
 
-  const row = (a) => a && ({ ...a, params: parseJson(a.params, {}), result: parseJson(a.result, null), label: TYPES[a.type]?.label ?? a.type });
+  // Un type d'action vient du socle ou d'un module enregistré auprès du noyau.
+  const typeDef = (type) => TYPES[type] ?? registry?.action(type);
+  const emit = (event, ws, action, extra = {}) => events?.emit(event, ws.id, { actionId: action.id, type: action.type, ...extra });
+  const row = (a) => a && ({ ...a, params: parseJson(a.params, {}), result: parseJson(a.result, null), label: typeDef(a.type)?.label ?? a.type });
   const get = (wsId, id) => row(db.get('SELECT * FROM actions WHERE id = ? AND workspace_id = ?', id, wsId));
 
   async function execute(ws, action, actor) {
     db.run("UPDATE actions SET status = 'en_cours' WHERE id = ?", action.id);
     try {
-      const result = await TYPES[action.type].run(ws, action.params, actor);
+      const def = typeDef(action.type);
+      if (!def) throw new Error('Le module qui fournissait cette action n\'est plus chargé');
+      if (def.module && !ws.modules.includes(def.module)) throw new Error(`Le module « ${def.module} » n'est pas activé pour cet espace`);
+      const result = def.module ? await def.run(ws, action.params, moduleApi(ws.id)) : await def.run(ws, action.params, actor);
       db.run("UPDATE actions SET status = 'reussie', result = ?, executed_at = ? WHERE id = ?", JSON.stringify(result ?? {}), now(), action.id);
       audit.record({ workspaceId: ws.id, actor: 'omnia', event: 'action.reussie', entity: 'action', entityId: action.id, detail: { type: action.type, result } });
+      emit('action.reussie', ws, action);
     } catch (e) {
       db.run("UPDATE actions SET status = 'echouee', error = ?, executed_at = ? WHERE id = ?", String(e.message).slice(0, 1000), now(), action.id);
       audit.record({ workspaceId: ws.id, actor: 'omnia', event: 'action.echouee', entity: 'action', entityId: action.id, detail: { type: action.type, error: e.message } });
+      emit('action.echouee', ws, action, { error: String(e.message).slice(0, 300) });
     }
     return get(ws.id, action.id);
   }
 
   return {
-    types: () => Object.entries(TYPES).map(([type, t]) => ({ type, label: t.label, sensitivity: t.sensitivity })),
-    sensitivityOf: (type) => TYPES[type]?.sensitivity,
+    types: () => [...Object.entries(TYPES).map(([type, t]) => ({ type, label: t.label, sensitivity: t.sensitivity, module: null })), ...(registry?.actions() ?? [])],
+    sensitivityOf: (type) => typeDef(type)?.sensitivity,
     list: (wsId, status) => (status
       ? db.all('SELECT * FROM actions WHERE workspace_id = ? AND status = ? ORDER BY id DESC LIMIT 200', wsId, status)
       : db.all('SELECT * FROM actions WHERE workspace_id = ? ORDER BY id DESC LIMIT 200', wsId)).map(row),
     get,
     // requestedBy : 'utilisateur' (demande directe ou recommandation acceptée) ou 'automatisation'.
     async request(ws, { type, params = {}, requestedBy = 'utilisateur', recommendationId = null, automation = null }) {
-      const def = TYPES[type];
+      const def = typeDef(type);
       if (!def) throw new Error(`Type d'action inconnu : ${type}`);
+      if (def.module && !ws.modules.includes(def.module)) throw new Error(`Le module « ${def.module} » n'est pas activé pour cet espace`);
       const clean = def.validate(params ?? {});
       const sensitive = def.sensitivity === 'sensible';
       const standing = Boolean(automation?.preauthorized); // autorisation permanente accordée explicitement par l'utilisateur
@@ -145,6 +156,7 @@ export function createExecution({ db, audit, services }) {
       audit.record({ workspaceId: ws.id, actor: requestedBy, event: needsApproval ? 'action.demandee' : 'action.autorisee', entity: 'action', entityId: id,
         detail: { type, params: clean, sensitivity: def.sensitivity, ...(sensitive && standing ? { autorisationPermanente: automation.id } : {}) } });
       const action = get(ws.id, id);
+      if (needsApproval) emit('action.en_attente', ws, action, { requestedBy });
       return needsApproval ? action : execute(ws, action, requestedBy);
     },
     async approve(ws, id) {

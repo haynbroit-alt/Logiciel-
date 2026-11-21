@@ -6,7 +6,10 @@ import path from 'node:path';
 import { openDb, today } from '../src/core/db.js';
 import { createAI } from '../src/ai/index.js';
 import { createKernel } from '../src/core/kernel.js';
-import { analyze } from '../src/engines/analysis.js';
+import { analyze as runRules } from '../src/engines/analysis.js';
+import { createRegistry } from '../src/core/registry.js';
+import { BUILTIN_MODULES } from '../src/modules/index.js';
+import { loadExternalModules } from '../src/server.js';
 import { decide, weightOf } from '../src/engines/decision.js';
 import { understandLocally } from '../src/engines/understanding.js';
 import { transactionsFromCsv, parseAmount, parseDate } from '../src/core/csv.js';
@@ -22,6 +25,8 @@ function setup(extra = {}) {
   const db = openDb(':memory:');
   return { db, config, k: createKernel({ db, ai: createAI({ provider: 'local' }), config }) };
 }
+const builtin = createRegistry(); BUILTIN_MODULES.forEach((m) => builtin.register(m));
+const analyze = (data, { date, enabledModules } = {}) => runRules(data, { date, rules: builtin.rulesFor(enabledModules) }).findings;
 const tx = (date, amount, label = '', category = 'divers', counterparty = '') => ({ id: Math.random(), date, amount, label, category, counterparty });
 
 test('compréhension locale : secteur, type et objectifs', () => {
@@ -50,10 +55,12 @@ test('analyse : retards, doublons, récurrences, dépendance, baisse', () => {
 
 test('décision : meilleure option = meilleur rapport impact/effort ; l\'apprentissage module la priorité', () => {
   const insight = { rule: 'taches.en_retard', kind: 'probleme', severity: 3, title: 't', detail: 'd', evidence: { taskIds: [1, 2, 3, 4] } };
-  const r = decide(insight, null);
+  const playbook = builtin.playbook('taches.en_retard');
+  const r = decide(insight, null, playbook);
   assert.equal(r.options[r.best_option].score, Math.max(...r.options.map((o) => o.score)));
-  assert.ok(decide(insight, { accepted: 3, rejected: 0, resolved: 2 }).priority > r.priority);
-  assert.ok(decide(insight, { accepted: 0, rejected: 3, resolved: 0 }).priority < r.priority);
+  assert.ok(decide(insight, { accepted: 3, rejected: 0, resolved: 2 }, playbook).priority > r.priority);
+  assert.ok(decide(insight, { accepted: 0, rejected: 3, resolved: 0 }, playbook).priority < r.priority);
+  assert.equal(decide({ ...insight, rule: 'sans.solution' }, null, undefined), null);
   assert.equal(weightOf({ accepted: 0, rejected: 99, resolved: 0 }), 0.4);
 });
 
@@ -348,4 +355,103 @@ test('IA : plusieurs fournisseurs essayés dans l\'ordre, chacun avec ses régla
   assert.throws(() => createAI({ provider: 'ollama,inconnu' }), /inconnu/);
   assert.throws(() => createAI({ provider: 'ollama,mistral' }, {}), /OMNIA_AI_API_KEY|requis/);
   assert.equal(createAI({ provider: 'local' }).generative, false);
+});
+
+test('noyau : un module externe apporte règle, solutions, action et réaction sans toucher au noyau', async () => {
+  const { k } = setup();
+  const example = (await import('../examples/module-exemple.js')).default;
+  const m = k.registerModule(example);
+  assert.deepEqual([m.source, m.rules.length, m.actions.length], ['externe', 1, 1]);
+  const w = await k.createWorkspace({ name: 'Test' });
+  k.createTask(w.id, { title: 'Urgent mais flou', priority: 1 });
+  assert.equal(k.runAnalysis(w.id).insights.length, 0, 'un module non activé pour l\'espace reste silencieux');
+  await assert.rejects(k.execution.request(k.workspace(w.id), { type: 'suivi-priorites.consigner', params: { titles: ['x'] } }), /n'est pas activé/);
+  k.updateWorkspace(w.id, { modules: [...w.modules, 'suivi-priorites'] });
+  const r = k.runAnalysis(w.id);
+  assert.equal(r.insights[0].rule, 'suivi-priorites.sans_echeance'); assert.equal(r.insights[0].ruleLabel, 'Tâches prioritaires sans échéance');
+  const rec = k.listRecommendations(w.id)[0];
+  assert.equal(rec.options[rec.best_option].label, 'Fixer une échéance à 3 jours');
+  const out = await k.acceptRecommendation(w.id, rec.id, 1); // l'option qui utilise l'action du module
+  assert.equal(out.actions[0].status, 'reussie'); assert.ok(k.data(w.id).documents.some((d) => d.title === 'Tâches prioritaires à planifier'));
+  // Réaction à un événement : la dernière tâche soldée déclenche la note du module.
+  for (const t of k.data(w.id).tasks) k.updateTask(w.id, t.id, { status: 'fait' });
+  await k.processEvents();
+  assert.ok(k.data(w.id).documents.some((d) => d.title === 'Toutes les tâches sont terminées'));
+  assert.ok(k.describe().modules.some((x) => x.id === 'suivi-priorites' && x.events.includes('tache.terminee')));
+});
+
+test('noyau : le registre refuse les modules mal formés, en bloc', async () => {
+  const { k } = setup(); const before = k.describe().modules.length;
+  const base = { id: 'essai', name: 'Essai' };
+  const bad = [
+    [{ ...base, id: 'Pas Valide' }, /Identifiant/], [{ ...base, id: 'gestion' }, /déjà enregistré/],
+    [{ ...base, rules: [{ id: 'finances.piratage', label: 'x', evaluate() {} }] }, /préfixée/],
+    [{ ...base, actions: { 'essai.envoi': { label: 'x', validate: (p) => p, run() {} } } }, /sensibilité/],
+    [{ ...base, actions: { 'tache.creer': { label: 'x', sensitivity: 'interne', validate: (p) => p, run() {} } } }, /préfixé/],
+    [{ ...base, rules: [{ id: 'essai.ok', label: 'ok', evaluate() {} }], actions: { 'essai.ko': { label: 'x', sensitivity: 'secrete', validate: (p) => p, run() {} } } }, /sensibilité/],
+  ];
+  for (const [mod, error] of bad) assert.throws(() => k.registerModule(mod), error);
+  assert.equal(k.describe().modules.length, before); assert.equal(k.registry.rule('essai.ok'), undefined, 'aucun enregistrement partiel');
+  // Une action sensible apportée par un module attend une autorisation, comme les autres.
+  let ran = 0;
+  k.registerModule({ ...base, actions: { 'essai.envoi': { label: 'Envoi', sensitivity: 'sensible', validate: () => ({}), run() { ran += 1; return {}; } } } });
+  const w = await k.createWorkspace({ name: 'T' }); k.updateWorkspace(w.id, { modules: [...w.modules, 'essai'] });
+  const a = await k.execution.request(k.workspace(w.id), { type: 'essai.envoi' });
+  assert.equal(a.status, 'en_attente'); assert.equal(ran, 0);
+  assert.equal((await k.execution.approve(k.workspace(w.id), a.id)).status, 'reussie'); assert.equal(ran, 1);
+});
+
+test('noyau : une règle défaillante est signalée sans interrompre l\'analyse ni effacer ses constats', async () => {
+  const { k } = setup(); let broken = false;
+  k.registerModule({ id: 'fragile', name: 'Fragile', rules: [{ id: 'fragile.regle', label: 'Fragile', evaluate() { if (broken) throw new Error('panne'); return { kind: 'risque', severity: 2, title: 'Signal fragile' }; } }] });
+  const w = await k.createWorkspace({ name: 'T' }); k.updateWorkspace(w.id, { modules: [...w.modules, 'fragile'] });
+  k.createTask(w.id, { title: 'En retard', due_date: d(3) });
+  assert.equal(k.runAnalysis(w.id).insights.length, 2);
+  broken = true; const r = k.runAnalysis(w.id);
+  assert.deepEqual(r.ruleErrors.map((e) => [e.rule, e.message]), [['fragile.regle', 'panne']]);
+  assert.equal(r.insights.length, 2, 'le constat de la règle en panne n\'est pas marqué résolu'); assert.equal(r.resolved, 0);
+});
+
+test('noyau : automatisation déclenchée par un événement, sans réaction en chaîne', async () => {
+  const { k } = setup();
+  const w = await k.createWorkspace({ name: 'T' });
+  k.createAutomation(w.id, { name: 'Analyser à chaque opération', trigger_event: 'operation.creee', action_type: 'analyse.lancer' });
+  k.createAutomation(w.id, { name: 'Boucle potentielle', trigger_event: 'analyse.executee', action_type: 'analyse.lancer' });
+  assert.throws(() => k.createAutomation(w.id, { name: 'x', trigger_event: 'inconnu', action_type: 'analyse.lancer' }), /inconnu/);
+  await k.processEvents(); // vide la file des événements de mise en place
+  const runs = () => k.audit.list(w.id).filter((e) => e.event === 'analyse.executee').length;
+  k.createTransaction(w.id, { date: d(1), amount: -10 });
+  await k.processEvents();
+  assert.equal(runs(), 1, 'l\'analyse provoquée par une réaction ne redéclenche rien');
+  assert.equal(k.events.stats().en_file, 0);
+  assert.deepEqual(await k.tick(), [], 'une automatisation sur événement n\'est pas rejouée par l\'horloge');
+});
+
+test('noyau : modules externes chargés depuis un dossier, erreurs isolées ; clé d\'API limitée à son espace', async () => {
+  const { k, config } = setup({ token: 'secret' });
+  const dir = tmp();
+  fs.copyFileSync(new URL('../examples/module-exemple.js', import.meta.url), path.join(dir, 'a-exemple.mjs'));
+  fs.writeFileSync(path.join(dir, 'b-casse.mjs'), 'export default { id: "x" };');
+  fs.writeFileSync(path.join(dir, 'c-erreur.mjs'), 'throw new Error("ne se charge pas");');
+  assert.deepEqual(await loadExternalModules(k, dir), ['suivi-priorites']);
+  assert.deepEqual(k.describe().erreurs_de_chargement.map((e) => e.file), ['b-casse.mjs', 'c-erreur.mjs']);
+  const server = createApp(config, k); await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const w = await k.createWorkspace({ name: 'Mien' }); const other = await k.createWorkspace({ name: 'Autre' });
+    const { token } = k.hub.issueToken(w.id, 'api');
+    const call = (method, p, body) => fetch(base + p, { method, headers: { authorization: `Bearer ${token}`, ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    const core = await (await call('GET', '/api/noyau')).json();
+    assert.deepEqual(core.cycle.length, 6); assert.ok(core.modules.some((m) => m.id === 'suivi-priorites' && m.source === 'externe'));
+    assert.equal((await call('POST', `/api/espaces/${w.id}/taches`, { title: 'Créée par un logiciel tiers' })).status, 200);
+    assert.equal((await call('POST', `/api/espaces/${w.id}/analyse`, {})).status, 200);
+    assert.equal((await call('GET', `/api/espaces/${other.id}/donnees`)).status, 403);
+    assert.equal((await call('GET', '/api/espaces')).status, 403);
+    assert.equal((await call('PATCH', `/api/espaces/${w.id}`, { autonomy: 'manuel' })).status, 403);
+    const pending = await (await call('POST', `/api/espaces/${w.id}/actions`, { type: 'webhook.envoyer', params: { url: 'http://10.0.0.1/x' } })).json();
+    assert.equal((await call('POST', `/api/espaces/${w.id}/actions/${pending.id}/approuver`, {})).status, 403, 'une machine ne s\'autorise pas elle-même');
+    assert.ok(k.audit.list(w.id).some((e) => e.actor === 'api'));
+    k.hub.revokeToken(w.id, 'api');
+    assert.equal((await call('GET', '/api/noyau')).status, 401);
+  } finally { server.close(); }
 });

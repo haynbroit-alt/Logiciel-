@@ -5,11 +5,13 @@ import { createAudit } from './audit.js';
 import { createAuth } from './auth.js';
 import { transactionsFromCsv } from './csv.js';
 import { understand, KINDS, SECTORS } from '../engines/understanding.js';
-import { analyze, computeKpis, dataGaps, RULES } from '../engines/analysis.js';
+import { analyze, computeKpis, dataGaps } from '../engines/analysis.js';
 import { decide, weightOf } from '../engines/decision.js';
-import { createExecution } from '../engines/execution.js';
+import { createExecution, BUILTIN_ACTION_TYPES } from '../engines/execution.js';
 import { generateDocument, answer, TEMPLATES } from '../engines/creation.js';
-import { MODULES, moduleById, suggestModules, sanitizeModules } from '../modules/index.js';
+import { BUILTIN_MODULES } from '../modules/index.js';
+import { createRegistry, ModuleError } from './registry.js';
+import { createEvents, EVENTS } from './events.js';
 import { createConnectors } from '../connectors/index.js';
 import { createHub, CHANNEL_TYPES, TOKEN_PURPOSES } from '../connectors/hub.js';
 
@@ -26,6 +28,10 @@ export function createKernel({ db, ai, config }) {
   const auth = createAuth(db, audit);
   const connectors = createConnectors(config);
   const clock = () => (config.clock ? config.clock() : new Date());
+  // Le registre est la source unique de ce que le noyau sait faire ; les modules intégrés s'y déclarent comme les autres.
+  const registry = createRegistry({ builtinActionTypes: BUILTIN_ACTION_TYPES });
+  for (const m of BUILTIN_MODULES) registry.register(m);
+  const events = createEvents();
 
   // ---------- Espaces ----------
   const wsRow = (w) => w && ({ ...w, goals: parseJson(w.goals, []), modules: parseJson(w.modules, []) });
@@ -41,7 +47,7 @@ export function createKernel({ db, ai, config }) {
     const profile = await understand(ai, description || name);
     const id = db.insert(
       'INSERT INTO workspaces (name, description, kind, sector, goals, modules, currency, profile_source, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
-      name, description, profile.kind, profile.sector, JSON.stringify(profile.goals), JSON.stringify(suggestModules(profile.sector)),
+      name, description, profile.kind, profile.sector, JSON.stringify(profile.goals), JSON.stringify(registry.suggest(profile.sector)),
       text(input.currency, 8, 'EUR') || 'EUR', profile.source, now(),
     );
     audit.record({ workspaceId: id, event: 'espace.cree', entity: 'espace', entityId: id, detail: { profile } });
@@ -57,7 +63,7 @@ export function createKernel({ db, ai, config }) {
     if (patch.currency !== undefined) next.currency = text(patch.currency, 8) || 'EUR';
     if (patch.autonomy !== undefined) { need(['manuel', 'assiste'].includes(patch.autonomy), 'Niveau d\'autonomie invalide'); next.autonomy = patch.autonomy; }
     if (patch.goals !== undefined) { need(Array.isArray(patch.goals), 'Objectifs invalides'); next.goals = JSON.stringify(patch.goals.map((g) => text(g, 200)).filter(Boolean).slice(0, 10)); }
-    if (patch.modules !== undefined) next.modules = JSON.stringify(sanitizeModules(patch.modules));
+    if (patch.modules !== undefined) next.modules = JSON.stringify(registry.sanitize(patch.modules));
     const keys = Object.keys(next);
     if (keys.length) {
       db.run(`UPDATE workspaces SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`, ...keys.map((k) => next[k]), w.id);
@@ -110,6 +116,7 @@ export function createKernel({ db, ai, config }) {
     }
     const id = db.insert('INSERT INTO tasks (workspace_id, project_id, title, notes, status, priority, due_date, origin, created_at, done_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
       wsId, projectId, title, text(input.notes, 2000), status, priority, isoDate(input.due_date), input.origin === 'omnia' ? 'omnia' : 'utilisateur', now(), status === 'fait' ? now() : null);
+    events.emit('tache.creee', wsId, { taskId: id, title });
     return db.get('SELECT * FROM tasks WHERE id = ?', id);
   }
   function updateTask(wsId, id, patch) {
@@ -121,6 +128,7 @@ export function createKernel({ db, ai, config }) {
     db.run('UPDATE tasks SET title = ?, notes = ?, status = ?, priority = ?, due_date = ?, done_at = ? WHERE id = ?',
       patch.title !== undefined ? text(patch.title, 300) || t.title : t.title, patch.notes !== undefined ? text(patch.notes, 2000) : t.notes,
       status, priority, patch.due_date !== undefined ? isoDate(patch.due_date) : t.due_date, doneAt, id);
+    if (status === 'fait' && t.status !== 'fait') events.emit('tache.terminee', wsId, { taskId: id, title: t.title });
     return db.get('SELECT * FROM tasks WHERE id = ?', id);
   }
   const deleteTask = (wsId, id) => need(db.run('DELETE FROM tasks WHERE id = ? AND workspace_id = ?', id, wsId).changes, 'Tâche introuvable', 404);
@@ -131,6 +139,7 @@ export function createKernel({ db, ai, config }) {
     const amount = Number(input.amount); need(Number.isFinite(amount) && amount !== 0 && Math.abs(amount) < 1e12, 'Montant invalide');
     const id = db.insert('INSERT INTO transactions (workspace_id, date, amount, category, label, counterparty, created_at) VALUES (?,?,?,?,?,?,?)',
       wsId, date, Math.round(amount * 100) / 100, text(input.category, 80) || 'divers', text(input.label, 300), text(input.counterparty, 200), now());
+    events.emit('operation.creee', wsId, { transactionId: id, amount: Math.round(amount * 100) / 100 });
     return db.get('SELECT * FROM transactions WHERE id = ?', id);
   }
   function importTransactions(wsId, csv) {
@@ -148,6 +157,7 @@ export function createKernel({ db, ai, config }) {
     const title = text(input.title, 200); need(title, 'Titre requis');
     const id = db.insert('INSERT INTO documents (workspace_id, title, kind, content, origin, created_at) VALUES (?,?,?,?,?,?)',
       wsId, title, text(input.kind, 40) || 'note', typeof input.content === 'string' ? input.content.slice(0, 200000) : '', input.origin === 'omnia' ? 'omnia' : 'utilisateur', now());
+    events.emit('document.cree', wsId, { documentId: id, title });
     return db.get('SELECT * FROM documents WHERE id = ?', id);
   }
   const deleteDocument = (wsId, id) => need(db.run('DELETE FROM documents WHERE id = ? AND workspace_id = ?', id, wsId).changes, 'Document introuvable', 404);
@@ -159,7 +169,7 @@ export function createKernel({ db, ai, config }) {
     transactions: db.all('SELECT * FROM transactions WHERE workspace_id = ? ORDER BY date DESC, id DESC', wsId),
     documents: db.all('SELECT * FROM documents WHERE workspace_id = ? ORDER BY id DESC', wsId),
   });
-  const insightRow = (i) => ({ ...i, evidence: parseJson(i.evidence, {}), ruleLabel: RULES[i.rule]?.label ?? i.rule });
+  const insightRow = (i) => ({ ...i, evidence: parseJson(i.evidence, {}), ruleLabel: registry.rule(i.rule)?.label ?? i.rule });
   const recRow = (r) => ({ ...r, options: parseJson(r.options, []) });
   const openInsights = (wsId) => db.all("SELECT * FROM insights WHERE workspace_id = ? AND status = 'ouvert' ORDER BY severity DESC, id DESC", wsId).map(insightRow);
   const listRecommendations = (wsId, status) => (status
@@ -172,7 +182,10 @@ export function createKernel({ db, ai, config }) {
     `INSERT INTO rule_weights (workspace_id, rule, ${field}) VALUES (?, ?, 1) ON CONFLICT(workspace_id, rule) DO UPDATE SET ${field} = ${field} + 1`, wsId, rule);
 
   function propose(wsId, insight) {
-    const d = decide(insight, stats(wsId, insight.rule));
+    let d = null;
+    try { d = decide(insight, stats(wsId, insight.rule), registry.playbook(insight.rule)); } catch (e) {
+      audit.record({ workspaceId: wsId, actor: 'omnia', event: 'module.erreur', entity: 'regle', detail: { rule: insight.rule, phase: 'solutions', message: String(e.message).slice(0, 300) } });
+    }
     if (!d) return;
     const pending = db.get("SELECT id FROM recommendations WHERE insight_id = ? AND status = 'proposee'", insight.id);
     if (pending) {
@@ -188,7 +201,8 @@ export function createKernel({ db, ai, config }) {
 
   function runAnalysis(wsId, actor = 'utilisateur') {
     const w = workspace(wsId); const d = data(w.id); const date = clock();
-    const findings = analyze(d, { date, enabledModules: w.modules });
+    const { findings, errors: ruleErrors } = analyze(d, { date, rules: registry.rulesFor(w.modules) });
+    const failed = new Set(ruleErrors.map((e) => e.rule)); const fresh = []; const gone = [];
     const seen = new Set(); let created = 0; let resolved = 0;
     db.tx(() => {
       for (const f of findings) {
@@ -198,7 +212,7 @@ export function createKernel({ db, ai, config }) {
         if (!ex) {
           id = db.insert('INSERT INTO insights (workspace_id, rule, fingerprint, kind, severity, title, detail, evidence, created_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
             w.id, f.rule, f.fingerprint, f.kind, f.severity, f.title, f.detail, JSON.stringify(f.evidence), now(), now());
-          created += 1;
+          created += 1; fresh.push({ insightId: id, rule: f.rule, kind: f.kind, severity: f.severity, title: f.title });
         } else {
           db.run(`UPDATE insights SET kind = ?, severity = ?, title = ?, detail = ?, evidence = ?, last_seen_at = ?${ex.status === 'resolu' ? ", status = 'ouvert', resolved_at = NULL" : ''} WHERE id = ?`,
             f.kind, f.severity, f.title, f.detail, JSON.stringify(f.evidence), now(), id);
@@ -209,11 +223,12 @@ export function createKernel({ db, ai, config }) {
       // Mesure des résultats : un constat qui ne se déclenche plus est résolu. Si une
       // recommandation avait été acceptée pour lui, la règle correspondante gagne en crédit.
       for (const i of db.all("SELECT * FROM insights WHERE workspace_id = ? AND status = 'ouvert'", w.id)) {
-        if (seen.has(i.fingerprint)) continue;
+        if (seen.has(i.fingerprint) || failed.has(i.rule)) continue; // une règle en panne ne « résout » rien
+        gone.push({ insightId: i.id, rule: i.rule, title: i.title });
         db.run("UPDATE insights SET status = 'resolu', resolved_at = ? WHERE id = ?", now(), i.id);
         db.run("UPDATE recommendations SET status = 'obsolete' WHERE insight_id = ? AND status = 'proposee'", i.id);
         const acted = db.get("SELECT id FROM recommendations WHERE insight_id = ? AND status = 'acceptee' AND outcome IS NULL ORDER BY id DESC LIMIT 1", i.id);
-        if (acted && w.modules.includes(RULES[i.rule]?.module)) {
+        if (acted && w.modules.includes(registry.rule(i.rule)?.module)) {
           db.run("UPDATE recommendations SET outcome = 'resolu' WHERE id = ?", acted.id);
           bump(w.id, i.rule, 'resolved');
         }
@@ -225,8 +240,10 @@ export function createKernel({ db, ai, config }) {
       }
     });
     const insights = openInsights(w.id);
-    audit.record({ workspaceId: w.id, actor, event: 'analyse.executee', entity: 'espace', entityId: w.id, detail: { constats: insights.length, nouveaux: created, resolus: resolved } });
-    return { insights, created, resolved, gaps: dataGaps(d) };
+    audit.record({ workspaceId: w.id, actor, event: 'analyse.executee', entity: 'espace', entityId: w.id, detail: { constats: insights.length, nouveaux: created, resolus: resolved, ...(ruleErrors.length ? { regles_en_erreur: ruleErrors } : {}) } });
+    fresh.forEach((f) => events.emit('constat.detecte', w.id, f)); gone.forEach((g) => events.emit('constat.resolu', w.id, g));
+    events.emit('analyse.executee', w.id, { constats: insights.length, nouveaux: created, resolus: resolved });
+    return { insights, created, resolved, gaps: dataGaps(d), ruleErrors };
   }
 
   function dashboard(wsId) {
@@ -234,7 +251,7 @@ export function createKernel({ db, ai, config }) {
     const d30 = today(new Date(date.getTime() - 30 * 86400000));
     const byCat = db.all('SELECT category, ROUND(-SUM(amount), 2) AS total FROM transactions WHERE workspace_id = ? AND amount < 0 AND date > ? GROUP BY category ORDER BY total DESC LIMIT 8', w.id, d30);
     const lastAnalysis = db.get("SELECT ts FROM audit_log WHERE workspace_id = ? AND event = 'analyse.executee' ORDER BY id DESC LIMIT 1", w.id)?.ts ?? null;
-    const learning = db.all('SELECT * FROM rule_weights WHERE workspace_id = ?', w.id).map((s) => ({ rule: s.rule, label: RULES[s.rule]?.label ?? s.rule, ...s, weight: weightOf(s) }));
+    const learning = db.all('SELECT * FROM rule_weights WHERE workspace_id = ?', w.id).map((s) => ({ rule: s.rule, label: registry.rule(s.rule)?.label ?? s.rule, ...s, weight: weightOf(s) }));
     return {
       workspace: w,
       kpis: computeKpis(d, date),
@@ -277,8 +294,22 @@ export function createKernel({ db, ai, config }) {
   }
 
   // ---------- Exécution ----------
+  // Ce qu'un module peut faire : agir dans l'espace concerné, et nulle part ailleurs.
+  const moduleApi = (wsId) => {
+    const w = workspace(wsId);
+    return Object.freeze({
+      workspace: Object.freeze({ id: w.id, name: w.name, kind: w.kind, sector: w.sector, currency: w.currency, goals: [...w.goals] }),
+      data: () => data(w.id),
+      kpis: () => computeKpis(data(w.id), clock()),
+      inDays,
+      createTask: (input) => createTask(w.id, { ...input, origin: 'omnia' }),
+      createDocument: (input) => createDocument(w.id, { ...input, origin: 'omnia' }),
+      createTransaction: (input) => createTransaction(w.id, input),
+    });
+  };
+
   const execution = createExecution({
-    db, audit,
+    db, audit, registry, events, moduleApi,
     services: {
       inDays, createTask, updateTask, createDocument, runAnalysis,
       generateDocument: generate,
@@ -318,6 +349,7 @@ export function createKernel({ db, ai, config }) {
     const insight = db.get('SELECT rule FROM insights WHERE id = ?', r.insight_id);
     if (insight) bump(w.id, insight.rule, 'accepted');
     audit.record({ workspaceId: w.id, event: 'recommandation.acceptee', entity: 'recommandation', entityId: id, detail: { option: option.label } });
+    events.emit('recommandation.acceptee', w.id, { recommendationId: id, option: option.label });
     const actions = [];
     for (const a of option.actions) {
       try { actions.push(await execution.request(w, { ...a, requestedBy: 'utilisateur', recommendationId: id })); } catch (e) { actions.push({ type: a.type, status: 'echouee', error: e.message }); }
@@ -332,6 +364,7 @@ export function createKernel({ db, ai, config }) {
     const insight = db.get('SELECT rule FROM insights WHERE id = ?', r.insight_id);
     if (insight) bump(wsId, insight.rule, 'rejected');
     audit.record({ workspaceId: wsId, event: 'recommandation.rejetee', entity: 'recommandation', entityId: id, detail: {} });
+    events.emit('recommandation.rejetee', wsId, { recommendationId: id });
   }
 
   function dismissInsight(wsId, id) {
@@ -346,10 +379,12 @@ export function createKernel({ db, ai, config }) {
     const w = workspace(wsId);
     need(w.modules.includes('automatisations'), 'Le module Automatisations n\'est pas activé pour cet espace');
     const name = text(input.name, 120); need(name, 'Nom requis');
-    const every = Number(input.every_minutes); need(Number.isInteger(every) && every >= 5 && every <= 525600, 'Intervalle invalide (5 minutes au minimum)');
+    const trigger = input.trigger_event ? String(input.trigger_event) : null;
+    need(!trigger || EVENTS[trigger], 'Événement déclencheur inconnu');
+    const every = trigger ? 0 : Number(input.every_minutes); need(trigger || (Number.isInteger(every) && every >= 5 && every <= 525600), 'Intervalle invalide (5 minutes au minimum)');
     need(execution.sensitivityOf(input.action_type), 'Type d\'action inconnu');
-    const id = db.insert('INSERT INTO automations (workspace_id, name, every_minutes, action_type, params, created_at) VALUES (?,?,?,?,?,?)', w.id, name, every, input.action_type, JSON.stringify(input.params ?? {}), now());
-    audit.record({ workspaceId: w.id, event: 'automatisation.creee', entity: 'automatisation', entityId: id, detail: { name, every_minutes: every, action_type: input.action_type } });
+    const id = db.insert('INSERT INTO automations (workspace_id, name, every_minutes, trigger_event, action_type, params, created_at) VALUES (?,?,?,?,?,?,?)', w.id, name, every, trigger, input.action_type, JSON.stringify(input.params ?? {}), now());
+    audit.record({ workspaceId: w.id, event: 'automatisation.creee', entity: 'automatisation', entityId: id, detail: { name, every_minutes: every, trigger_event: trigger, action_type: input.action_type } });
     return listAutomations(w.id).find((a) => a.id === id);
   }
   function updateAutomation(wsId, id, patch) {
@@ -376,8 +411,28 @@ export function createKernel({ db, ai, config }) {
     return status;
   }
   // Appelé périodiquement par l'ordonnanceur : exécute les automatisations arrivées à échéance.
+  // Traite les événements en attente : réactions des modules activés, puis automatisations
+  // déclenchées par événement. Ce qu'une réaction provoque ne relance pas d'autres réactions.
+  function processEvents() {
+    return events.drain(async (e) => {
+      const w = wsRow(db.get('SELECT * FROM workspaces WHERE id = ?', e.workspaceId));
+      if (!w) return;
+      for (const l of registry.listeners(e.event, w.modules)) {
+        try { await l.fn({ event: e.event, at: e.at, ...e.payload }, moduleApi(w.id)); } catch (err) {
+          audit.record({ workspaceId: w.id, actor: `module:${l.module}`, event: 'module.erreur', entity: 'module', detail: { module: l.module, phase: `réaction à ${e.event}`, message: String(err.message).slice(0, 300) } });
+        }
+      }
+      if (!w.modules.includes('automatisations')) return;
+      for (const a of db.all('SELECT * FROM automations WHERE workspace_id = ? AND enabled = 1 AND trigger_event = ?', w.id, e.event)) {
+        if (db.get("SELECT id FROM actions WHERE automation_id = ? AND status = 'en_attente'", a.id)) continue;
+        await runAutomation(a);
+      }
+    });
+  }
+
   async function tick() {
-    const due = db.all('SELECT * FROM automations WHERE enabled = 1').filter((a) => !a.last_run_at || Date.parse(a.last_run_at) + a.every_minutes * 60000 <= clock().getTime());
+    await processEvents();
+    const due = db.all('SELECT * FROM automations WHERE enabled = 1 AND every_minutes > 0').filter((a) => !a.last_run_at || Date.parse(a.last_run_at) + a.every_minutes * 60000 <= clock().getTime());
     const ran = [];
     for (const a of due) {
       // Une action sensible encore en attente n'est pas redemandée à chaque passage.
@@ -385,11 +440,12 @@ export function createKernel({ db, ai, config }) {
       if (!db.get('SELECT id FROM workspaces WHERE id = ?', a.workspace_id)) continue;
       ran.push({ id: a.id, status: await runAutomation(a) });
     }
+    await processEvents();
     return ran;
   }
 
   function addStarterTasks(wsId, moduleId) {
-    const w = workspace(wsId); const m = moduleById(moduleId);
+    const w = workspace(wsId); const m = registry.module(moduleId);
     need(m?.starterTasks && w.modules.includes(m.id), 'Ce module ne propose pas de tâches de démarrage ou n\'est pas activé');
     return m.starterTasks.map((title) => createTask(w.id, { title, due_date: inDays(14), origin: 'omnia' }));
   }
@@ -407,7 +463,7 @@ export function createKernel({ db, ai, config }) {
       tasks: d.tasks.map(({ project_id, title, notes, status, priority, due_date, origin, created_at, done_at }) => ({ project_id, title, notes, status, priority, due_date, origin, created_at, done_at })),
       transactions: d.transactions.map(({ date, amount, category, label, counterparty }) => ({ date, amount, category, label, counterparty })),
       documents: d.documents.map(({ title, kind, content, origin, created_at }) => ({ title, kind, content, origin, created_at })),
-      automations: listAutomations(w.id).map(({ name, every_minutes, action_type, params, enabled }) => ({ name, every_minutes, action_type, params, enabled })),
+      automations: listAutomations(w.id).map(({ name, every_minutes, trigger_event, action_type, params, enabled }) => ({ name, every_minutes, trigger_event, action_type, params, enabled })),
     };
   }
 
@@ -420,7 +476,7 @@ export function createKernel({ db, ai, config }) {
     const id = db.tx(() => {
       const wsId = db.insert('INSERT INTO workspaces (name, description, kind, sector, goals, modules, autonomy, currency, profile_source, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
         name, text(src.description, 5000), KINDS.includes(src.kind) ? src.kind : 'entreprise', SECTORS.includes(src.sector) ? src.sector : 'general',
-        JSON.stringify(list(src.goals).map((g) => text(g, 200)).filter(Boolean).slice(0, 10)), JSON.stringify(sanitizeModules(src.modules)),
+        JSON.stringify(list(src.goals).map((g) => text(g, 200)).filter(Boolean).slice(0, 10)), JSON.stringify(registry.sanitize(src.modules)),
         src.autonomy === 'manuel' ? 'manuel' : 'assiste', text(src.currency, 8) || 'EUR', 'import', now());
       const projectIds = new Map();
       for (const p of list(payload.projects)) {
@@ -439,9 +495,9 @@ export function createKernel({ db, ai, config }) {
       // Les automatisations sont restaurées en pause et sans autorisation permanente :
       // une sauvegarde ne doit jamais réactiver seule des actions.
       for (const a of list(payload.automations)) {
-        const every = Number(a.every_minutes);
-        if (!execution.sensitivityOf(a.action_type) || !Number.isInteger(every) || every < 5 || every > 525600 || !text(a.name, 120)) continue;
-        db.run('INSERT INTO automations (workspace_id, name, every_minutes, action_type, params, enabled, created_at) VALUES (?,?,?,?,?,0,?)', wsId, text(a.name, 120), every, a.action_type, JSON.stringify(a.params ?? {}), now());
+        const trigger = EVENTS[a.trigger_event] ? a.trigger_event : null; const every = trigger ? 0 : Number(a.every_minutes);
+        if (!execution.sensitivityOf(a.action_type) || !text(a.name, 120) || (!trigger && (!Number.isInteger(every) || every < 5 || every > 525600))) continue;
+        db.run('INSERT INTO automations (workspace_id, name, every_minutes, trigger_event, action_type, params, enabled, created_at) VALUES (?,?,?,?,?,?,0,?)', wsId, text(a.name, 120), every, trigger, a.action_type, JSON.stringify(a.params ?? {}), now());
         counts.automatisations = (counts.automatisations ?? 0) + 1;
       }
       Object.assign(counts, { projets: list(payload.projects).length, taches: list(payload.tasks).length, operations: list(payload.transactions).length, documents: list(payload.documents).length });
@@ -452,8 +508,21 @@ export function createKernel({ db, ai, config }) {
   }
 
   return {
-    audit, auth, execution, connectors, hub, ai,
-    meta: () => ({ modules: MODULES, kinds: KINDS, sectors: SECTORS, templates: Object.entries(TEMPLATES).map(([id, t]) => ({ id, title: t.title })), actionTypes: execution.types(), connectors: connectors.list(), channelTypes: Object.entries(CHANNEL_TYPES).map(([id, t]) => ({ id, label: t.label })), tokenPurposes: TOKEN_PURPOSES, stripe: hub.stripeConfigured(), ai: { provider: ai.provider, model: ai.model, generative: ai.generative } }),
+    audit, auth, execution, connectors, hub, ai, registry, events, processEvents,
+    // Enregistre un module auprès du noyau (modules externes chargés au démarrage, ou par programme).
+    registerModule(mod, source = 'externe') {
+      try { const m = registry.register(mod, { source }); audit.record({ actor: 'omnia', event: 'module.enregistre', entity: 'module', detail: { id: m.id, source, regles: m.rules.length, actions: m.actions.length } }); return m; }
+      catch (e) { if (e instanceof ModuleError) throw new OmniaError(e.message); throw e; }
+    },
+    // Carte du noyau : ce qui y est branché et ce qui y circule.
+    describe: () => ({
+      nom: 'OMNIA Ω', version: config.version ?? null,
+      cycle: ['comprendre', 'analyser', 'décider', 'agir', 'mesurer', 'apprendre'],
+      modules: registry.modules(), erreurs_de_chargement: registry.errors(),
+      actions: execution.types(), evenements: EVENTS, file_evenements: events.stats(),
+      ia: { fournisseurs: ai.providers ?? [], generative: ai.generative },
+    }),
+    meta: () => ({ modules: registry.modules(), events: EVENTS, kinds: KINDS, sectors: SECTORS, templates: Object.entries(TEMPLATES).map(([id, t]) => ({ id, title: t.title })), actionTypes: execution.types(), connectors: connectors.list(), channelTypes: Object.entries(CHANNEL_TYPES).map(([id, t]) => ({ id, label: t.label })), tokenPurposes: TOKEN_PURPOSES, stripe: hub.stripeConfigured(), ai: { provider: ai.provider, model: ai.model, generative: ai.generative } }),
     listWorkspaces: () => db.all('SELECT * FROM workspaces ORDER BY id').map(wsRow),
     workspace, createWorkspace, updateWorkspace, deleteWorkspace, exportWorkspace, importWorkspace,
     data, createProject, updateProject, deleteProject, createTask, deleteTask,

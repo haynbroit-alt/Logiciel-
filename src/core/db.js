@@ -99,6 +99,7 @@ export function openDb(dbPath) {
   raw.exec(SCHEMA);
   // Migrations légères : colonnes ajoutées après la première version.
   const hasColumn = (table, column) => raw.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+  if (!hasColumn('automations', 'trigger_event')) raw.exec('ALTER TABLE automations ADD COLUMN trigger_event TEXT');
   if (!hasColumn('transactions', 'external_id')) raw.exec('ALTER TABLE transactions ADD COLUMN external_id TEXT');
   return {
     raw,

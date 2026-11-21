@@ -1,9 +1,12 @@
-// Registre des modules. Le noyau est commun ; chaque espace n'active que ce dont il a besoin.
+// Modules intégrés. Le noyau est commun ; chaque espace n'active que ce dont il a besoin.
 // `tier` décrit le positionnement commercial prévu (gratuit / pro). Aucune restriction
 // de licence n'est appliquée dans cette version : tous les modules sont utilisables.
-export const MODULES = [
-  { id: 'gestion', name: 'Gestion', tier: 'gratuit', core: true, description: 'Projets, tâches, priorités et échéances.' },
-  { id: 'finances', name: 'Finances', tier: 'gratuit', core: true, description: 'Suivi des dépenses et des revenus, détection des pertes.' },
+import gestion from './gestion.js';
+import finances from './finances.js';
+
+export const BUILTIN_MODULES = [
+  gestion,
+  finances,
   { id: 'memoire', name: 'Mémoire', tier: 'gratuit', core: true, description: 'Documents, notes et connaissance de l\'activité.' },
   { id: 'creation', name: 'Création', tier: 'gratuit', core: true, description: 'Plans d\'action, offres, stratégies et rapports.' },
   { id: 'automatisations', name: 'Automatisations', tier: 'pro', description: 'Tâches répétitives exécutées à intervalle régulier.' },
@@ -44,17 +47,3 @@ export const MODULES = [
     templates: ['plan_action', 'budget'],
   },
 ];
-
-export const moduleById = (id) => MODULES.find((m) => m.id === id);
-export const coreModuleIds = () => MODULES.filter((m) => m.core).map((m) => m.id);
-
-// Modules proposés pour un secteur donné : le socle + automatisations/connecteurs + le pack adapté.
-export function suggestModules(sector) {
-  const pack = MODULES.find((m) => m.sectors?.includes(sector));
-  return [...coreModuleIds(), 'automatisations', 'connecteurs', ...(pack ? [pack.id] : [])];
-}
-
-export function sanitizeModules(ids) {
-  const valid = new Set(MODULES.map((m) => m.id));
-  return [...new Set([...coreModuleIds(), ...(Array.isArray(ids) ? ids.filter((i) => valid.has(i)) : [])])];
-}

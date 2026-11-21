@@ -144,7 +144,7 @@ const importBackup = act(async (ev) => {
 const VIEWS = [
   ['tableau', 'Tableau de bord'], ['assistant', 'Assistant'], ['decisions', 'Décisions'], ['actions', 'Actions'],
   ['gestion', 'Gestion', 'gestion'], ['finances', 'Finances', 'finances'], ['memoire', 'Mémoire', 'memoire'],
-  ['automatisations', 'Automatisations', 'automatisations'], ['connexions', 'Connexions', 'connecteurs'], ['journal', 'Journal'], ['reglages', 'Réglages'],
+  ['automatisations', 'Automatisations', 'automatisations'], ['connexions', 'Connexions', 'connecteurs'], ['journal', 'Journal'], ['noyau', 'Noyau'], ['reglages', 'Réglages'],
 ];
 const page = (title, subtitle, actions, ...content) => [
   h('div', { class: 'head' }, h('div', {}, h('h1', {}, title), subtitle && h('p', { class: 'muted' }, subtitle)), h('div', { class: 'row' }, actions)),
@@ -323,15 +323,15 @@ const views = {
     const [list, channels] = await Promise.all([api('GET', ws('/automatisations')), state.workspace.modules.includes('connecteurs') ? api('GET', ws('/canaux')) : []]);
     const every = (m) => (m % 1440 === 0 ? `tous les ${m / 1440} jour(s)` : m % 60 === 0 ? `toutes les ${m / 60} heure(s)` : `toutes les ${m} minutes`);
     return page('Automatisations', 'Les tâches répétitives, exécutées à intervalle régulier tant qu\'OMNIA est en marche.', null,
-      h('form', { class: 'card inline', onsubmit: act((ev) => { const f = formData(ev.target); const presets = { ...Object.fromEntries(channels.map((c) => [`canal-${c.id}`, ['message.envoyer', { channelId: c.id, text: 'Point automatique', include: 'indicateurs' }]])), analyse: ['analyse.lancer', {}], rapport: ['document.generer', { template: 'rapport', brief: 'Point périodique' }], export: ['export.csv', { dataset: 'transactions' }] }; const [action_type, params] = presets[f.preset]; return api('POST', ws('/automatisations'), { name: f.name, every_minutes: Number(f.every), action_type, params }); }, 'Automatisation créée') },
+      h('form', { class: 'card inline', onsubmit: act((ev) => { const f = formData(ev.target); const presets = { ...Object.fromEntries(channels.map((c) => [`canal-${c.id}`, ['message.envoyer', { channelId: c.id, text: 'Point automatique', include: 'indicateurs' }]])), analyse: ['analyse.lancer', {}], rapport: ['document.generer', { template: 'rapport', brief: 'Point périodique' }], export: ['export.csv', { dataset: 'transactions' }] }; const [action_type, params] = presets[f.preset]; return api('POST', ws('/automatisations'), { name: f.name, ...(f.every.startsWith('evt:') ? { trigger_event: f.every.slice(4) } : { every_minutes: Number(f.every) }), action_type, params }); }, 'Automatisation créée') },
         h('label', { class: 'grow' }, 'Nom', h('input', { name: 'name', required: true, maxLength: 120, placeholder: 'Ex. : analyse quotidienne' })),
         h('label', {}, 'Action', h('select', { name: 'preset' }, h('option', { value: 'analyse' }, 'Lancer une analyse'), h('option', { value: 'rapport' }, 'Générer un rapport d\'activité'), h('option', { value: 'export' }, 'Exporter les opérations (CSV)'), channels.map((c) => h('option', { value: `canal-${c.id}` }, `Envoyer les indicateurs sur ${c.name} (sensible)`)))),
-        h('label', {}, 'Fréquence', h('select', { name: 'every' }, h('option', { value: 60 }, 'Toutes les heures'), h('option', { value: 1440, selected: true }, 'Tous les jours'), h('option', { value: 10080 }, 'Toutes les semaines'))),
+        h('label', {}, 'Déclencheur', h('select', { name: 'every' }, h('optgroup', { label: 'À intervalle régulier' }, h('option', { value: 60 }, 'Toutes les heures'), h('option', { value: 1440, selected: true }, 'Tous les jours'), h('option', { value: 10080 }, 'Toutes les semaines')), h('optgroup', { label: 'Quand…' }, Object.entries(state.meta.events).map(([k, v]) => h('option', { value: `evt:${k}` }, v))))),
         h('button', { class: 'primary' }, 'Créer')),
       h('div', { class: 'card stack' }, h('h2', {}, `Automatisations (${list.length})`),
         list.length ? list.map((a) => h('div', { class: 'item stack' },
           h('div', { class: 'row between' }, h('strong', {}, a.name), h('div', { class: 'row' }, badge(a.sensitivity), badge(a.enabled ? 'reussie' : 'refusee', a.enabled ? 'Active' : 'En pause'))),
-          h('p', { class: 'muted small' }, `${state.meta.actionTypes.find((t) => t.type === a.action_type)?.label ?? a.action_type} · ${every(a.every_minutes)} · dernière exécution : ${fdatetime(a.last_run_at)}${a.last_status ? ` (${L(a.last_status)})` : ''}`),
+          h('p', { class: 'muted small' }, `${state.meta.actionTypes.find((t) => t.type === a.action_type)?.label ?? a.action_type} · ${a.trigger_event ? `quand : ${(state.meta.events[a.trigger_event] ?? a.trigger_event).toLowerCase()}` : every(a.every_minutes)} · dernière exécution : ${fdatetime(a.last_run_at)}${a.last_status ? ` (${L(a.last_status)})` : ''}`),
           h('div', { class: 'row' },
             h('button', { onclick: act(() => api('PATCH', ws(`/automatisations/${a.id}`), { enabled: !a.enabled })) }, a.enabled ? 'Mettre en pause' : 'Réactiver'),
             a.sensitivity === 'sensible' ? h('label', { class: 'check small' }, h('input', { type: 'checkbox', checked: Boolean(a.preauthorized), onchange: act((ev) => { if (ev.target.checked && !window.confirm('Autoriser cette automatisation à exécuter son action sensible sans vous redemander à chaque fois ?')) { ev.target.checked = false; return null; } return api('PATCH', ws(`/automatisations/${a.id}`), { preauthorized: ev.target.checked }); }) }), 'Autorisation permanente') : null,
@@ -347,7 +347,7 @@ const views = {
       return h('div', { class: 'card stack' }, h('h2', {}, title), h('p', { class: 'muted small' }, intro),
         mine ? h('div', { class: 'notice info stack' }, h('strong', {}, 'À copier maintenant : cette adresse ne sera plus affichée.'), show(mine)) : active ? h('p', { class: 'small' }, `Accès actif depuis le ${fdate(active.created_at)}. L'adresse n'est pas conservée en clair : régénérez-la si vous l'avez perdue.`) : empty('Aucun accès actif.'),
         owner ? h('div', { class: 'row' },
-          h('button', { onclick: act(async () => { if (active && !window.confirm('Générer une nouvelle adresse désactive l\'ancienne. Continuer ?')) return; const t = await api('POST', ws('/acces'), { usage }); state.freshToken = { ...t, ws: state.wsId }; }) }, active ? 'Régénérer l\'adresse' : 'Activer'),
+          h('button', { onclick: act(async () => { if (active && !window.confirm('Générer une nouvelle adresse désactive l\'ancienne. Continuer ?')) return; const t = await api('POST', ws('/acces'), { usage }); state.freshToken = { ...t, ws: state.wsId }; }) }, active ? 'Régénérer' : 'Activer'),
           active ? h('button', { class: 'link danger', onclick: act(async () => { await api('POST', ws('/acces/revoquer'), { usage }); state.freshToken = null; }, 'Accès révoqué') }, 'Révoquer') : null) : h('p', { class: 'muted small' }, 'Seul un propriétaire peut gérer cet accès.'));
     };
     return page('Connexions', 'Relier OMNIA à vos autres outils. Rien ne sort sans autorisation ; ce qui entre est tracé.', null,
@@ -367,11 +367,36 @@ const views = {
           (t) => [h('code', {}, `${origin}/api/entrant/${t}`), h('p', { class: 'small' }, 'Exemple de corps JSON (POST) :'), h('code', {}, '{"type":"tache","titre":"Rappeler le client","echeance":"2027-01-15"}'), h('code', {}, '{"type":"operation","montant":-49.9,"libelle":"Abonnement","categorie":"abonnements"}'), h('code', {}, '{"type":"note","titre":"Compte rendu","contenu":"…"}')]),
         access('calendrier', 'Calendrier', 'Une adresse d\'abonnement (iCalendar) pour voir les échéances des tâches et projets dans Google Agenda, Outlook ou Apple Calendrier. Lecture seule.',
           (t) => [h('code', {}, `${origin}/api/calendrier/${t}.ics`)])),
+      access('api', 'Clé d\'API', 'Pour qu\'un autre logiciel pilote cet espace à travers le noyau : lire les données, créer, analyser, demander des actions. La clé agit comme un membre : elle ne peut ni autoriser une action sensible, ni modifier les réglages, ni voir un autre espace.',
+        (t) => [h('code', {}, t), h('p', { class: 'small' }, 'Exemple :'), h('code', {}, `curl -H "Authorization: Bearer ${t}" ${origin}/api/espaces/${state.wsId}/tableau-de-bord`)]),
       h('div', { class: 'card stack' }, h('h2', {}, 'Stripe'),
         state.meta.stripe ? [h('p', { class: 'muted small' }, 'Importe les mouvements de solde (montants nets, frais déduits) comme opérations financières. Lecture seule ; les mouvements déjà importés ne sont pas dupliqués.'),
           h('form', { class: 'inline', onsubmit: act((ev) => api('POST', ws('/actions'), { type: 'stripe.importer', params: { days: Number(formData(ev.target).days) } }), (a) => toast(a.status === 'reussie' ? `${a.result.importees} mouvement(s) importé(s), ${a.result.deja_presentes} déjà présent(s)${a.result.autre_devise ? `, ${a.result.autre_devise} ignoré(s) (autre devise)` : ''}` : `Échec : ${a.error}`, a.status !== 'reussie')) },
             h('label', {}, 'Période', h('select', { name: 'days' }, h('option', { value: 30 }, '30 derniers jours'), h('option', { value: 90 }, '90 derniers jours'), h('option', { value: 365 }, '12 derniers mois'))), h('button', {}, 'Importer depuis Stripe'))]
           : h('p', { class: 'muted small' }, 'Non configuré. Pour l\'activer, démarrez OMNIA avec OMNIA_STRIPE_KEY (clé restreinte, lecture des « balance transactions » uniquement).')));
+  },
+
+  async noyau() {
+    const n = await api('GET', '/noyau'); const active = state.workspace.modules;
+    const sens = (a) => badge(a.sensitivity);
+    return page('Noyau', `OMNIA Ω ${n.version ?? ''} — un noyau central ; tout le reste s'y branche.`, null,
+      h('div', { class: 'card stack' }, h('h2', {}, 'Le cycle'), h('p', {}, n.cycle.map((c, i) => [i ? ' → ' : '', h('strong', {}, c)])),
+        h('p', { class: 'muted small' }, 'Le noyau ne contient aucune règle métier : il orchestre ce que les modules lui déclarent, applique les autorisations, journalise et publie les événements.')),
+      n.erreurs_de_chargement.length ? h('div', { class: 'notice stack' }, h('strong', {}, 'Modules externes non chargés'), n.erreurs_de_chargement.map((e) => h('span', { class: 'small' }, `${e.file} : ${e.message}`))) : null,
+      h('div', { class: 'card stack' }, h('h2', {}, `Modules enregistrés (${n.modules.length})`),
+        h('div', { class: 'tablewrap' }, h('table', {}, h('thead', {}, h('tr', {}, ['Module', 'Origine', 'Règles', 'Actions', 'Réagit à', 'Dans cet espace'].map((t) => h('th', {}, t)))),
+          h('tbody', {}, n.modules.map((m) => h('tr', {}, h('td', {}, h('strong', {}, m.name), h('div', { class: 'muted small' }, m.description)),
+            h('td', {}, badge(m.source === 'externe' ? 'pro' : 'gratuit', m.source === 'externe' ? 'externe' : m.core ? 'socle' : 'intégré')),
+            h('td', { class: 'small' }, m.rules.length ? m.rules.map((r) => h('div', {}, r.label)) : '—'), h('td', { class: 'small' }, m.actions.length ? m.actions.map((a) => h('div', {}, a.label, ' ', sens(a))) : '—'),
+            h('td', { class: 'small' }, m.events.length ? m.events.join(', ') : '—'), h('td', {}, active.includes(m.id) ? badge('reussie', 'activé') : h('span', { class: 'muted small' }, 'inactif')))))))),
+      h('div', { class: 'grid cols-2' },
+        h('div', { class: 'card stack' }, h('h2', {}, `Types d'action (${n.actions.length})`), h('p', { class: 'muted small' }, 'Toute action passe par le noyau. « Sensible » : jamais exécutée sans autorisation.'),
+          n.actions.map((a) => h('div', { class: 'row between small' }, h('span', {}, a.label, ' ', h('code', {}, a.type)), sens(a)))),
+        h('div', { class: 'card stack' }, h('h2', {}, 'Événements'), h('p', { class: 'muted small' }, `Publiés par le noyau ; modules et automatisations y réagissent. ${n.file_evenements.emis} émis depuis le démarrage, ${n.file_evenements.en_file} en file.`),
+          Object.entries(n.evenements).map(([k, v]) => h('div', { class: 'row between small' }, h('span', {}, v), h('code', {}, k))))),
+      h('div', { class: 'card stack' }, h('h2', {}, 'Étendre le noyau'),
+        h('p', { class: 'small' }, 'Un module est un fichier JavaScript déposé dans le dossier de modules, chargé au démarrage. Il déclare règles, solutions, actions et réactions ; le noyau l\'appelle avec une interface limitée à l\'espace concerné. Exemple complet : ', h('code', {}, 'examples/module-exemple.js'), '.'),
+        h('p', { class: 'small' }, 'Un logiciel tiers pilote le noyau par l\'API avec une clé propre à un espace (écran Connexions). Référence : ', h('code', {}, 'docs/API.md'), '.')));
   },
 
   async journal() {
@@ -406,7 +431,7 @@ const views = {
             h('p', { class: 'muted small' }, 'Se configure au démarrage par variables d\'environnement (OMNIA_AI_PROVIDER, OMNIA_AI_MODEL, OMNIA_AI_API_KEY). Les clés ne sont jamais enregistrées dans la base.', ai.generative && ai.provider !== 'ollama' ? ' Avec ce fournisseur, le contexte de vos questions et documents lui est transmis.' : '')))),
       h('div', { class: 'card stack' }, h('h2', {}, 'Modules'),
         state.meta.modules.map((m) => h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: w.modules.includes(m.id), disabled: Boolean(m.core), onchange: act((ev) => api('PATCH', ws(), { modules: ev.target.checked ? [...w.modules, m.id] : w.modules.filter((x) => x !== m.id) })) }),
-          h('span', {}, h('strong', {}, m.name), ' ', badge(m.tier, m.core ? 'socle' : m.tier), h('span', { class: 'muted small' }, ` ${m.description}`)))),
+          h('span', {}, h('strong', {}, m.name), ' ', badge(m.tier, m.core ? 'socle' : m.tier), m.source === 'externe' ? [' ', badge('pro', 'externe')] : null, h('span', { class: 'muted small' }, ` ${m.description}`)))),
         h('p', { class: 'muted small' }, 'La mention « pro » indique le positionnement commercial prévu. Dans cette version, tous les modules sont utilisables sans licence.')),
       h('div', { class: 'card stack' }, h('h2', {}, 'Connecteurs'), state.meta.connectors.map((c) => h('div', { class: 'row between' }, h('span', {}, h('strong', {}, c.name), h('span', { class: 'muted small' }, ` — ${c.description}`)), badge(c.sensitivity)))),
       await accountsCards(w),
