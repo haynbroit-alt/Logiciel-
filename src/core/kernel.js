@@ -9,6 +9,7 @@ import { analyze, computeKpis, dataGaps } from '../engines/analysis.js';
 import { decide, weightOf } from '../engines/decision.js';
 import { createExecution, BUILTIN_ACTION_TYPES } from '../engines/execution.js';
 import { generateDocument, answer, TEMPLATES } from '../engines/creation.js';
+import { interpret, priorities } from '../engines/intent.js';
 import { BUILTIN_MODULES } from '../modules/index.js';
 import { createRegistry, ModuleError } from './registry.js';
 import { createEvents, EVENTS } from './events.js';
@@ -268,6 +269,7 @@ export function createKernel({ db, ai, config }) {
         actions_echouees: db.get("SELECT COUNT(*) AS n FROM actions WHERE workspace_id = ? AND status = 'echouee'", w.id).n,
       },
       learning,
+      priorities: priorities({ tasks: d.tasks, pendingActions: execution.list(w.id, 'en_attente'), recommendations: listRecommendations(w.id, 'proposee') }, date),
       gaps: dataGaps(d),
       lastAnalysis,
       ai: { provider: ai.provider, model: ai.model, generative: ai.generative },
@@ -290,7 +292,14 @@ export function createKernel({ db, ai, config }) {
 
   async function ask(wsId, question) {
     const q = text(question, 2000); need(q, 'Question requise');
-    return answer(ai, q, context(wsId));
+    const ctx = context(wsId);
+    // 1. Comprendre la demande : quelles actions contient-elle ? 2. Y répondre. Rien n'est exécuté ici.
+    const plan = await interpret(ai, q, { now: clock(), currency: ctx.workspace.currency, validate: execution.validate });
+    const top = plan.wantsPriorities ? ctx.priorities : [];
+    const onlyActions = plan.proposals.length > 0 && !plan.hasQuestion && !plan.wantsPriorities;
+    const base = onlyActions ? { answer: '', source: plan.source, sources: [] } : await answer(ai, q, ctx, { priorities: top });
+    const lead = plan.proposals.length ? `J'ai compris ${plan.proposals.length} action${plan.proposals.length > 1 ? 's' : ''} dans votre demande. Rien n'est fait tant que vous ne validez pas :` : '';
+    return { ...base, answer: [lead, base.answer].filter(Boolean).join('\n\n'), proposals: plan.proposals, priorities: top, understanding: plan.source, fallbackReason: base.fallbackReason ?? plan.fallbackReason };
   }
 
   // ---------- Exécution ----------
@@ -311,7 +320,7 @@ export function createKernel({ db, ai, config }) {
   const execution = createExecution({
     db, audit, registry, events, moduleApi,
     services: {
-      inDays, createTask, updateTask, createDocument, runAnalysis,
+      inDays, createTask, updateTask, createDocument, createTransaction, runAnalysis,
       generateDocument: generate,
       exportCsv(wsId, dataset) {
         const d = data(wsId);

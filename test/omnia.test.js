@@ -16,6 +16,7 @@ import { transactionsFromCsv, parseAmount, parseDate } from '../src/core/csv.js'
 import { assertPublicUrl, toCsv } from '../src/connectors/index.js';
 import { createApp } from '../src/server.js';
 import { loadConfig } from '../src/config.js';
+import { findDate, findAmount, interpretLocally, interpret, priorities } from '../src/engines/intent.js';
 
 const NOW = new Date('2026-06-15T12:00:00Z');
 const d = (n) => today(new Date(NOW.getTime() - n * 86400000));
@@ -454,4 +455,78 @@ test('noyau : modules externes chargés depuis un dossier, erreurs isolées ; cl
     k.hub.revokeToken(w.id, 'api');
     assert.equal((await call('GET', '/api/noyau')).status, 401);
   } finally { server.close(); }
+});
+
+const SAT = new Date('2026-11-21T10:00:00Z'); // un samedi
+
+test('intention : dates relatives et absolues, passées ou à venir selon le contexte', () => {
+  const at = (q, opts) => findDate(q, SAT, opts)?.date ?? null;
+  const cases = [['demain', '2026-11-22'], ['après-demain', '2026-11-23'], ["aujourd'hui", '2026-11-21'], ['vendredi', '2026-11-27'], ['samedi', '2026-11-28'], ['lundi prochain', '2026-11-23'],
+    ['dans 3 jours', '2026-11-24'], ['dans deux semaines', '2026-12-05'], ['la semaine prochaine', '2026-11-28'], ['fin du mois', '2026-11-30'], ['le 3 décembre', '2026-12-03'], ['le 1er mars', '2027-03-01'],
+    ['le 15', '2026-12-15'], ['avant le 25', '2026-11-25'], ['le 12/11', '2027-11-12'], ['le 05/01/2027', '2027-01-05'], ['31/02', null], ['rien de daté', null], ['le 15 €', null]];
+  for (const [q, want] of cases) assert.equal(at(q), want, q);
+  const past = [['hier', '2026-11-20'], ['avant-hier', '2026-11-19'], ['lundi', '2026-11-16'], ['samedi', '2026-11-14'], ['le 12/11', '2026-11-12'], ['le 25', '2026-10-25'], ['il y a 3 jours', '2026-11-18'], ['le 3 décembre', '2025-12-03']];
+  for (const [q, want] of past) assert.equal(at(q, { past: true }), want, `passé : ${q}`);
+});
+
+test('intention : montants à la française', () => {
+  for (const [q, want] of [['45 €', 45], ['45,90 €', 45.9], ['1 234,50 euros', 1234.5], ['1.200 €', 1200], ['2k€', 2000], ['12.5', 12.5]]) assert.equal(findAmount(q)?.value, want, q);
+  assert.equal(findAmount('aucun chiffre'), null);
+});
+
+test('intention : une demande en langage courant devient des actions à valider', () => {
+  const one = (q) => interpretLocally(q, { now: SAT }).proposals[0];
+  let a = one("Rappelle-moi de relancer Dupont vendredi, c'est urgent");
+  assert.deepEqual([a.type, a.params.title, a.params.due_date, a.params.priority], ['tache.creer', 'Relancer Dupont', '2026-11-27', 1]);
+  a = one("J'ai payé 45,90 € chez Leroy Merlin hier pour des vis");
+  assert.deepEqual([a.type, a.params.amount, a.params.date, a.params.counterparty, a.params.label], ['operation.enregistrer', -45.9, '2026-11-20', 'Leroy Merlin', 'Vis']);
+  a = one('Reçu 1 200 euros de Mme Roche le 12/11');
+  assert.deepEqual([a.params.amount, a.params.date, a.params.counterparty], [1200, '2026-11-12', 'Mme Roche']);
+  a = one('je dois acheter 3 pots de peinture demain');
+  assert.deepEqual([a.type, a.params.title, a.params.due_date], ['tache.creer', 'Acheter 3 pots de peinture', '2026-11-22'], 'un achat à faire n\'est pas une dépense faite');
+  assert.equal(one('Pense à appeler le comptable').params.sans_echeance, true);
+  assert.equal(one("Prépare un plan d'action pour la rentrée").params.template, 'plan_action');
+  const multi = interpretLocally('Fais le point. Pense à appeler le comptable dans 3 jours', { now: SAT }).proposals;
+  assert.deepEqual(multi.map((p) => p.type), ['analyse.lancer', 'tache.creer']); assert.equal(multi[1].params.title, 'Appeler le comptable');
+  // Une question ne déclenche jamais d'action.
+  for (const q of ['Combien ai-je dépensé ce mois-ci ?', 'Bonjour', 'Pourquoi mes revenus baissent ?', 'Est-ce que je dois payer 200 € à Dupont ?', 'Faut-il prévoir un budget ?']) assert.deepEqual(interpretLocally(q, { now: SAT }).proposals, [], q);
+  assert.equal(interpretLocally('Quelles sont mes priorités ?', { now: SAT }).wantsPriorities, true);
+});
+
+test('priorités : autorisations d\'abord, puis retards, échéances proches et recommandations', () => {
+  const t = (id, title, due_date, priority = 2, status = 'a_faire') => ({ id, title, due_date, priority, status });
+  const list = priorities({
+    tasks: [t(1, 'Sans date', null), t(2, 'Très en retard', '2026-11-01'), t(3, 'Demain', '2026-11-22'), t(4, 'Haute sans date', null, 1), t(5, 'Faite', '2026-11-01', 1, 'fait'), t(6, 'Peu en retard, haute', '2026-11-20', 1)],
+    pendingActions: [{ id: 9, label: 'Envoyer un message' }], recommendations: [{ id: 7, title: 'Renégocier', rationale: 'Charges lourdes. Détail.', priority: 2 }],
+  }, SAT);
+  assert.deepEqual(list.map((x) => x.title), ['Autoriser ou refuser : Envoyer un message', 'Très en retard', 'Peu en retard, haute', 'Demain', 'Renégocier']);
+  assert.match(list[1].why, /20 jours/); assert.deepEqual(list.map((x) => x.rank), [1, 2, 3, 4, 5]);
+});
+
+test('assistant : comprend, propose, n\'exécute rien sans validation', async () => {
+  const { k } = setup();
+  const w = await k.createWorkspace({ name: 'T' });
+  const r = await k.ask(w.id, "J'ai payé 30 € chez Bricomax hier. Rappelle-moi de commander du bois demain");
+  assert.equal(r.proposals.length, 2); assert.match(r.answer, /2 actions/);
+  assert.equal(k.data(w.id).transactions.length + k.data(w.id).tasks.length, 0, 'aucune écriture avant validation');
+  for (const p of r.proposals) assert.equal((await k.execution.request(k.workspace(w.id), { type: p.type, params: p.params })).status, 'reussie');
+  const data = k.data(w.id);
+  assert.deepEqual([data.transactions[0].amount, data.transactions[0].counterparty, data.tasks[0].title, data.tasks[0].due_date], [-30, 'Bricomax', 'Commander du bois', d(-1)]);
+  const p = await k.ask(w.id, 'Par quoi commencer ?');
+  assert.equal(p.proposals.length, 0); assert.match(p.answer, /Vos priorités/); assert.equal(p.priorities[0].title, 'Commander du bois');
+  assert.match((await k.ask(w.id, 'Combien ai-je dépensé ?')).answer, /30 EUR de dépenses/);
+});
+
+test('intention avec IA : le plan du modèle est validé par le noyau, jamais d\'action sensible', async () => {
+  const validate = setup().k.execution.validate;
+  const ai = (text) => ({ generative: true, complete: async () => ({ text, provider: 'essai', model: 'm' }) });
+  const plan = await interpret(ai(JSON.stringify({ actions: [
+    { type: 'tache.creer', params: { title: 'Appeler le notaire', due_date: '2026-12-01' } },
+    { type: 'webhook.envoyer', params: { url: 'https://pirate.example/x' } },
+    { type: 'operation.enregistrer', params: { amount: 'beaucoup', date: '2026-11-20' } },
+    { type: 'tache.creer', params: { title: 'Date impossible', due_date: '2026-02-31' } },
+  ], priorites: false, question: false })), 'peu importe', { now: SAT, validate });
+  assert.deepEqual(plan.proposals.map((p) => p.params.title), ['Appeler le notaire']); assert.equal(plan.source, 'essai:m');
+  const broken = await interpret(ai('désolé, pas de JSON'), 'Rappelle-moi de payer le loyer demain', { now: SAT, validate });
+  assert.equal(broken.source, 'local'); assert.equal(broken.proposals[0].params.title, 'Payer le loyer'); assert.match(broken.fallbackReason, /non structuré/);
 });

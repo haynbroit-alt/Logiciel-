@@ -87,3 +87,4 @@ main > * + * { margin-top: 14px; }
 .chart .dot { fill: var(--accent); stroke: var(--panel); stroke-width: 1.5; }
 .chart .axis { stroke: var(--line); stroke-width: 1; }
 .chart .tick { fill: var(--muted); font-size: 11px; }
+.prio { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; }

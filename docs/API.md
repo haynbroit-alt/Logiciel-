@@ -37,7 +37,7 @@ Remplacez `:ws` par l'identifiant de l'espace.
 | `POST /api/espaces/:ws/documents` `{title, content, kind?}` | ajoute un document à la mémoire | membre |
 | `POST /api/espaces/:ws/documents/generer` `{template, brief?}` | produit un document | membre |
 | `POST /api/espaces/:ws/analyse` | lance une analyse ; retourne constats et règles en erreur | membre |
-| `POST /api/espaces/:ws/assistant` `{question}` | interroge l'assistant | membre |
+| `POST /api/espaces/:ws/assistant` `{question}` | comprend une demande : retourne `answer`, `proposals` (actions à valider, non exécutées) et `priorities` | membre |
 | `GET /api/espaces/:ws/recommandations` | recommandations et leurs options | lecteur |
 | `POST /api/espaces/:ws/recommandations/:id/accepter` `{option?}` | accepte une option et lance ses actions | membre |
 | `POST /api/espaces/:ws/recommandations/:id/rejeter` | rejette | membre |
