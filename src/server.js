@@ -41,10 +41,12 @@ function requiredRole(method, pathname) {
   if (/\/(membres|canaux|acces)(\/\w+)?$/.test(pathname) && !(method === 'GET' && /\/canaux$/.test(pathname))) return 'proprietaire';
   if (/^\/api\/espaces\/\d+$/.test(pathname) && method !== 'GET') return 'proprietaire';
   if (/\/actions\/\d+\/(approuver|refuser)$/.test(pathname)) return 'proprietaire';
+  if (/\/cinema\/projets\/\d+\/(valider|rouvrir)$/.test(pathname)) return 'proprietaire'; // les validations d'étape sont des décisions de propriétaire
   if (/\/automatisations(\/\d+)?$/.test(pathname) && method !== 'GET') return 'proprietaire';
   return method === 'GET' ? 'lecteur' : 'membre';
 }
 const studioWs = (k, p) => { const w = k.workspace(p.ws); if (!w.modules.includes('studio')) throw new OmniaError('Le module Studio n\'est pas activé pour cet espace', 409); return w.id; };
+const cinemaWs = (k, p) => { const w = k.workspace(p.ws); if (!w.modules.includes('cinema')) throw new OmniaError('Le module Studio de cinéma n\'est pas activé pour cet espace', 409); return w.id; };
 const own = (k, c, w) => { if (c.user) k.auth.setMember(w.id, { userId: c.user.id, role: 'proprietaire' }); return w; };
 
 const ROUTES = [
@@ -78,6 +80,23 @@ const ROUTES = [
   ['POST', '/api/espaces/:ws/studio/projets/:id/avancer', (k, p) => k.studio.advance(studioWs(k, p), p.id)],
   ['POST', '/api/espaces/:ws/studio/projets/:id/encaissements', (k, p, b) => k.studio.recordSale(studioWs(k, p), p.id, b)],
   ['POST', '/api/espaces/:ws/studio/projets/:id/generer', (k, p, b) => k.generateForStudio(studioWs(k, p), p.id, b.template)],
+  ['GET', '/api/espaces/:ws/cinema', (k, p) => ({ projects: k.cinema.list(cinemaWs(k, p)), reference: k.cinema.reference, production: k.renderer.info(), formats: k.renderer.formats })],
+  ['POST', '/api/espaces/:ws/cinema/projets', (k, p, b) => k.cinema.createProject(cinemaWs(k, p), b)],
+  ['GET', '/api/espaces/:ws/cinema/projets/:id', (k, p) => ({ ...k.cinema.get(cinemaWs(k, p), p.id, { frames: true }), dossier_apports: `${k.renderer.dirOf(p.ws, p.id)}/apports` })],
+  ['PATCH', '/api/espaces/:ws/cinema/projets/:id', (k, p, b) => k.cinema.updateProject(cinemaWs(k, p), p.id, b)],
+  ['DELETE', '/api/espaces/:ws/cinema/projets/:id', (k, p) => k.cinema.remove(cinemaWs(k, p), p.id)],
+  ['POST', '/api/espaces/:ws/cinema/projets/:id/script', (k, p) => k.cinema.writeScript(cinemaWs(k, p), p.id)],
+  ['POST', '/api/espaces/:ws/cinema/projets/:id/plans', (k, p, b) => k.cinema.saveShot(cinemaWs(k, p), p.id, null, b)],
+  ['PATCH', '/api/espaces/:ws/cinema/projets/:id/plans/:sid', (k, p, b) => k.cinema.saveShot(cinemaWs(k, p), p.id, p.sid, b)],
+  ['DELETE', '/api/espaces/:ws/cinema/projets/:id/plans/:sid', (k, p) => k.cinema.removeShot(cinemaWs(k, p), p.id, p.sid)],
+  ['POST', '/api/espaces/:ws/cinema/projets/:id/bible', (k, p, b) => k.cinema.saveBible(cinemaWs(k, p), p.id, null, b)],
+  ['PATCH', '/api/espaces/:ws/cinema/projets/:id/bible/:sid', (k, p, b) => k.cinema.saveBible(cinemaWs(k, p), p.id, p.sid, b)],
+  ['DELETE', '/api/espaces/:ws/cinema/projets/:id/bible/:sid', (k, p) => k.cinema.removeBible(cinemaWs(k, p), p.id, p.sid)],
+  ['POST', '/api/espaces/:ws/cinema/projets/:id/valider', (k, p, b, c) => k.cinema.approve(cinemaWs(k, p), p.id, b.etape, c.user?.name ?? 'utilisateur')],
+  ['POST', '/api/espaces/:ws/cinema/projets/:id/rouvrir', (k, p, b) => k.cinema.reopen(cinemaWs(k, p), p.id, b.etape)],
+  ['POST', '/api/espaces/:ws/cinema/projets/:id/tourner', (k, p) => k.renderer.shoot(cinemaWs(k, p), p.id)],
+  ['POST', '/api/espaces/:ws/cinema/projets/:id/assembler', (k, p, b) => k.renderer.assemble(cinemaWs(k, p), p.id, b.type)],
+  ['GET', '/api/espaces/:ws/cinema/projets/:id/exports/:sid/fichier', (k, p) => ({ __file: k.renderer.exportFile(cinemaWs(k, p), p.id, p.sid) })],
   ['GET', '/api/meta', (k) => k.meta()],
   ['GET', '/api/noyau', (k) => k.describe()],
   ['GET', '/api/espaces', (k, p, b, c) => {
@@ -188,6 +207,19 @@ export function createApp(config, kernel) {
       const out = await requestContext.run({ actor: apiWs ? 'api' : user?.name }, () => r.handler(kernel, params, body, ctx));
       // Les événements nés de cette requête sont traités ensuite, sans faire attendre la réponse.
       if (req.method !== 'GET') kernel.processEvents().catch((e) => console.error('[omnia] événements :', e.message));
+      if (out?.__file) {
+        // Lecture vidéo : les requêtes partielles permettent au lecteur d'avancer et de reculer dans le film.
+        const size = fs.statSync(out.__file.path).size; const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '');
+        const head = { 'content-type': out.__file.type, 'accept-ranges': 'bytes', 'content-disposition': `inline; filename="${out.__file.name}"`, 'cache-control': 'no-store', ...SECURITY_HEADERS };
+        if (m && (m[1] || m[2])) {
+          const start = m[1] ? Number(m[1]) : Math.max(0, size - Number(m[2])); const end = m[1] && m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+          if (start > end || start >= size) { res.writeHead(416, { 'content-range': `bytes */${size}`, ...SECURITY_HEADERS }); return res.end(); }
+          res.writeHead(206, { ...head, 'content-range': `bytes ${start}-${end}/${size}`, 'content-length': end - start + 1 });
+          return fs.createReadStream(out.__file.path, { start, end }).pipe(res);
+        }
+        res.writeHead(200, { ...head, 'content-length': size });
+        return fs.createReadStream(out.__file.path).pipe(res);
+      }
       if (out?.__raw) { res.writeHead(200, { 'content-type': out.__raw.type, 'cache-control': 'no-store', ...SECURITY_HEADERS }); return res.end(out.__raw.body); }
       return send(res, out === undefined ? 204 : 200, out, ctx.headers);
     }

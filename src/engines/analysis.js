@@ -30,10 +30,10 @@ export function computeKpis({ tasks, transactions, projects }, date = new Date()
 // Contexte fourni à chaque règle : les données de l'espace, des périodes prêtes à l'emploi et des outils de calcul.
 const NO_STUDIO = { projects: [], autofinancement: { budget_initial: 0, encaisse: 0, depense: 0, disponible: 0, depassement: 0 } };
 
-export function analysisContext({ tasks = [], projects = [], transactions = [], documents = [], studio = NO_STUDIO }, date = new Date()) {
+export function analysisContext({ tasks = [], projects = [], transactions = [], documents = [], studio = NO_STUDIO, cinema = { projects: [] } }, date = new Date()) {
   const t0 = isoToday(date); const d30 = daysAgo(30, date); const d60 = daysAgo(60, date);
   return Object.freeze({
-    tasks, projects, transactions, documents, studio, date, t0, d30, d60,
+    tasks, projects, transactions, documents, studio, cinema, date, t0, d30, d60,
     open: tasks.filter((t) => t.status !== 'fait'),
     cur: transactions.filter((x) => x.date > d30 && x.date <= t0),
     prev: transactions.filter((x) => x.date > d60 && x.date <= d30),

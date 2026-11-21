@@ -619,3 +619,84 @@ test('studio : API fermée si le module est inactif ; documents produits à part
     assert.equal(o.reference.criteria.reduce((s, c) => s + c.max, 0), 100); assert.equal(o.reference.stages.length, 10);
   } finally { server.close(); }
 });
+
+import { spawnSync } from 'node:child_process';
+const HAS_FFMPEG = spawnSync('ffmpeg', ['-version']).status === 0;
+const filmSetup = async (extra) => { const s = setup(extra); const w = await s.k.createWorkspace({ name: 'Studio', description: 'Créateur de films et de vidéos' }); return { ...s, w, C: s.k.cinema, R: s.k.renderer }; };
+
+test('cinéma : quatre validations dans l\'ordre ; toute retouche en amont annule ce qui en dépendait', async () => {
+  const { k, w, C, R } = await filmSetup();
+  assert.ok(w.modules.includes('cinema'));
+  let p = C.createProject(w.id, { title: 'Le Robot', idea: 'Un robot découvre une miette.', style: 'animation 3D, nuit', target_seconds: 30 });
+  const refuse = (gate, re) => assert.throws(() => C.approve(w.id, p.id, gate), re);
+  refuse('script', /vide/); refuse('storyboard', /Script/);
+  // Sans IA : une trame à remplir, que l'on ne peut pas valider telle quelle.
+  p = await C.writeScript(w.id, p.id);
+  assert.equal(p.scriptSource, 'local'); assert.equal(p.shots.length, 6); assert.deepEqual([...new Set(p.shots.map((s) => s.scene_title))], ['Exposition', 'Confrontation', 'Résolution']);
+  refuse('script', /6 plan\(s\) n'ont pas encore de description/);
+  for (const s of p.shots) p = C.saveShot(w.id, p.id, s.id, { description: `Le robot avance, plan ${s.number}`, dialogue: s.number === 2 ? 'Bip ?' : '', speaker: s.number === 2 ? 'Robot' : '' });
+  p = C.saveBible(w.id, p.id, null, { kind: 'personnage', name: 'Robot', descriptor: 'petit robot rond blanc, un seul œil bleu lumineux, antenne' });
+  const robot = p.bible[0].id; p = C.saveShot(w.id, p.id, p.shots[0].id, { refs: [robot, 999] });
+  assert.deepEqual(p.shots[0].refs, [robot], 'une référence inconnue est écartée');
+  p = C.approve(w.id, p.id, 'script', 'Camille'); assert.equal(p.gates[0].approved.by, 'Camille');
+  // Cohérence : la bible doit être verrouillée, et sa description entre mot pour mot dans la consigne du plan.
+  refuse('storyboard', /pas verrouillés/);
+  p = C.saveBible(w.id, p.id, robot, { locked: true });
+  assert.throws(() => C.saveBible(w.id, p.id, robot, { descriptor: 'robot carré rouge' }), /verrouillé/); assert.throws(() => C.removeBible(w.id, p.id, robot), /verrouillé/);
+  assert.match(p.shots[0].prompt, /Personnages : Robot — petit robot rond blanc, un seul œil bleu lumineux, antenne/); assert.match(p.shots[0].prompt, /Style : animation 3D, nuit/);
+  assert.ok(!p.shots[1].prompt.includes('Personnages'), 'un plan sans personnage rattaché ne reçoit pas sa description');
+  await assert.rejects(R.shoot(w.id, p.id), /storyboard doit être validé/);
+  p = C.approve(w.id, p.id, 'storyboard'); refuse('plans', /pas encore été tournés/);
+  await assert.rejects(R.assemble(w.id, p.id, 'premontage'), /plans doivent être validés/); await assert.rejects(R.assemble(w.id, p.id, 'final'), /montage final doit être validé/);
+  // Retouches : cadrage → storyboard ; texte → script ; bible déverrouillée → storyboard.
+  const state = () => C.get(w.id, p.id).gates.map((g) => (g.approved ? 1 : 0)).join('');
+  C.saveShot(w.id, p.id, p.shots[0].id, { apport: 'plan1.mp4' }); assert.equal(state(), '1100', 'changer la source d\'un plan ne remet pas le storyboard en cause');
+  C.saveShot(w.id, p.id, p.shots[0].id, { apport: '../../etc/passwd' }); assert.equal(C.get(w.id, p.id).shots[0].apport, null, 'un nom de fichier hors dossier est refusé');
+  C.saveShot(w.id, p.id, p.shots[0].id, { size: 'gros plan' }); assert.equal(state(), '1000');
+  C.approve(w.id, p.id, 'storyboard'); C.saveBible(w.id, p.id, robot, { locked: false }); assert.equal(state(), '1000');
+  C.saveBible(w.id, p.id, robot, { locked: true }); C.approve(w.id, p.id, 'storyboard'); C.saveShot(w.id, p.id, p.shots[1].id, { dialogue: 'Bip bip ?' }); assert.equal(state(), '0000');
+  assert.ok(k.audit.list(w.id).some((e) => e.event === 'cinema.validations_annulees'));
+  assert.match(C.get(w.id, p.id, { frames: true }).shots[0].frame, /^<svg[^>]+viewBox/);
+  assert.ok(k.runAnalysis(w.id).insights.some((i) => i.rule === 'cinema.validation_en_attente'));
+});
+
+test('cinéma avec IA : le découpage du modèle est borné et validé ; repli sur la trame en cas d\'échec', async () => {
+  const mk = (text) => { const s = setup(); const ai = { generative: true, provider: 'essai', complete: async () => ({ text, provider: 'essai', model: 'm' }) }; return createKernel({ db: s.db, ai, config: s.config }); };
+  const good = JSON.stringify({ bible: [{ kind: 'personnage', name: 'Robot', descriptor: 'petit robot rond' }, { kind: 'inconnu', name: '', descriptor: '' }],
+    scenes: [{ title: 'Salon', shots: [{ description: 'Le robot roule sous le canapé.', size: 'plan large', angle: 'plongée', movement: 'vol stationnaire', duration: 900, refs: ['robot', 'fantôme'] }, { description: '<script>alert(1)</script>', duration: 'x' }] }] });
+  let k = mk(good); let w = await k.createWorkspace({ name: 'S', description: 'films' }); let p = await k.cinema.writeScript(w.id, k.cinema.createProject(w.id, { title: 'T', idea: 'i' }).id);
+  assert.equal(p.scriptSource, 'essai:m'); assert.equal(p.bible.length, 1);
+  assert.deepEqual([p.shots[0].movement, p.shots[0].duration, p.shots[0].refs.length, p.shots[1].duration], ['fixe', 60, 1, 4], 'valeurs hors liste ramenées aux bornes');
+  assert.ok(!k.cinema.get(w.id, p.id, { frames: true }).shots[1].frame.includes('<script>'), 'le texte est échappé dans le storyboard');
+  k = mk('je ne peux pas'); w = await k.createWorkspace({ name: 'S', description: 'films' }); p = await k.cinema.writeScript(w.id, k.cinema.createProject(w.id, { title: 'T', idea: 'i', target_seconds: 20 }).id);
+  assert.equal(p.scriptSource, 'local'); assert.match(p.fallbackReason, /non structuré/); assert.ok(p.shots.every((s) => s.description.startsWith('À écrire')));
+});
+
+test('cinéma : tournage par briques interchangeables, coût par minute, montage et exports dans les deux formats', { skip: !HAS_FFMPEG && 'ffmpeg absent' }, async () => {
+  // Brique vidéo branchée : ici une mire produite par ffmpeg, facturée 0,50 par seconde.
+  const { w, C, R, config } = await filmSetup({ cinemaBricks: { video: { nom: 'Mire d\'essai', commande: ['ffmpeg', '-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=s=640x360:r=24:d={duree}', '-pix_fmt', 'yuv420p', '{sortie}'], cout_par_seconde: 0.5 } } });
+  assert.equal(R.info().briques.video.type, 'commande'); assert.equal(R.info().briques.voix.type, 'aucune');
+  let p = C.createProject(w.id, { title: 'Essai', target_seconds: 10 });
+  p = C.saveShot(w.id, p.id, null, { description: 'Plan généré par la brique', duration: 1, dialogue: 'Bonjour.', speaker: 'Ana' });
+  p = C.saveShot(w.id, p.id, null, { description: 'Plan fourni', duration: 1 });
+  C.approve(w.id, p.id, 'script'); C.approve(w.id, p.id, 'storyboard');
+  const apports = path.join(R.dirOf(w.id, p.id), 'apports');
+  spawnSync('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=red:s=360x640:r=30:d=1', '-pix_fmt', 'yuv420p', path.join(apports, 'vertical.mp4')]);
+  C.saveShot(w.id, p.id, p.shots[1].id, { apport: 'vertical.mp4' });
+  const shot = await R.shoot(w.id, p.id);
+  assert.deepEqual(shot.rapport.map((r) => [r.plan, r.origine, r.secondes]), [[1, 'Mire d\'essai', 1], [2, 'apport', 1]]);
+  assert.deepEqual([shot.costTotal, shot.costPerMinute], [0.5, 15], 'seul le plan généré est facturé : 0,50 pour 2 s de film');
+  C.approve(w.id, p.id, 'plans'); C.updateProject(w.id, p.id, { grade: 'noir_blanc' });
+  const pre = await R.assemble(w.id, p.id, 'premontage');
+  assert.deepEqual(pre.produit.map((x) => x.taille), ['640x360']); assert.deepEqual(pre.sous_titres, { repliques: 1, incrustes: true });
+  C.approve(w.id, p.id, 'montage');
+  const fin = await R.assemble(w.id, p.id, 'final');
+  assert.deepEqual(fin.produit.map((x) => [x.format, x.taille]), [['16x9', '1920x1080'], ['9x16', '1080x1920']]);
+  assert.ok(fin.produit.every((x) => Math.abs(x.secondes - 2) < 0.3)); assert.equal(fin.currentGate, null);
+  const file = R.exportFile(w.id, p.id, fin.exports.find((e) => e.format === '9x16').id);
+  assert.ok(fs.statSync(file.path).size > 10000); assert.match(fs.readFileSync(path.join(R.dirOf(w.id, p.id), 'exports', 'sous-titres.srt'), 'utf8'), /Ana : Bonjour\./);
+  // Changer l'étalonnage après validation rouvre le montage et périme les exports.
+  const after = C.updateProject(w.id, p.id, { grade: 'chaud' });
+  assert.equal(after.currentGate, 'montage'); await assert.rejects(R.assemble(w.id, p.id, 'final'), /doit être validé/);
+  assert.ok(config.dataDir);
+});

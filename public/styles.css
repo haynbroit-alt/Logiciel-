@@ -98,3 +98,7 @@ main > * + * { margin-top: 14px; }
 form.inline > label, .row > label { flex: 0 1 auto; min-width: 120px; }
 form.inline > label.grow, .row > label.grow { flex: 1 1 240px; }
 label.grow > input, label.grow > select { width: 100%; }
+.frames { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.frames figure { margin: 0; } .frames img { width: 100%; display: block; border-radius: 6px; background: #fff; }
+video { width: 100%; max-height: 70vh; border-radius: 8px; background: #000; } video.tall { max-width: 320px; }
+a.btn { text-decoration: none; display: inline-block; }
