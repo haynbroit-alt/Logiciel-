@@ -81,6 +81,12 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS memberships (
   workspace_id INTEGER NOT NULL, user_id INTEGER NOT NULL, role TEXT NOT NULL, PRIMARY KEY (workspace_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS channels (
+  id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL, url TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS access_tokens (
+  token_hash TEXT PRIMARY KEY, workspace_id INTEGER NOT NULL, purpose TEXT NOT NULL, created_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_tasks_ws ON tasks(workspace_id, status);
 CREATE INDEX IF NOT EXISTS idx_tx_ws ON transactions(workspace_id, date);
 CREATE INDEX IF NOT EXISTS idx_actions_ws ON actions(workspace_id, status);
@@ -91,6 +97,9 @@ export function openDb(dbPath) {
   const raw = new DatabaseSync(dbPath);
   raw.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
   raw.exec(SCHEMA);
+  // Migrations légères : colonnes ajoutées après la première version.
+  const hasColumn = (table, column) => raw.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+  if (!hasColumn('transactions', 'external_id')) raw.exec('ALTER TABLE transactions ADD COLUMN external_id TEXT');
   return {
     raw,
     all: (sql, ...p) => raw.prepare(sql).all(...p).map((r) => ({ ...r })),

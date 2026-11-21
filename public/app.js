@@ -144,7 +144,7 @@ const importBackup = act(async (ev) => {
 const VIEWS = [
   ['tableau', 'Tableau de bord'], ['assistant', 'Assistant'], ['decisions', 'Décisions'], ['actions', 'Actions'],
   ['gestion', 'Gestion', 'gestion'], ['finances', 'Finances', 'finances'], ['memoire', 'Mémoire', 'memoire'],
-  ['automatisations', 'Automatisations', 'automatisations'], ['journal', 'Journal'], ['reglages', 'Réglages'],
+  ['automatisations', 'Automatisations', 'automatisations'], ['connexions', 'Connexions', 'connecteurs'], ['journal', 'Journal'], ['reglages', 'Réglages'],
 ];
 const page = (title, subtitle, actions, ...content) => [
   h('div', { class: 'head' }, h('div', {}, h('h1', {}, title), subtitle && h('p', { class: 'muted' }, subtitle)), h('div', { class: 'row' }, actions)),
@@ -320,12 +320,12 @@ const views = {
   },
 
   async automatisations() {
-    const list = await api('GET', ws('/automatisations'));
+    const [list, channels] = await Promise.all([api('GET', ws('/automatisations')), state.workspace.modules.includes('connecteurs') ? api('GET', ws('/canaux')) : []]);
     const every = (m) => (m % 1440 === 0 ? `tous les ${m / 1440} jour(s)` : m % 60 === 0 ? `toutes les ${m / 60} heure(s)` : `toutes les ${m} minutes`);
     return page('Automatisations', 'Les tâches répétitives, exécutées à intervalle régulier tant qu\'OMNIA est en marche.', null,
-      h('form', { class: 'card inline', onsubmit: act((ev) => { const f = formData(ev.target); const presets = { analyse: ['analyse.lancer', {}], rapport: ['document.generer', { template: 'rapport', brief: 'Point périodique' }], export: ['export.csv', { dataset: 'transactions' }] }; const [action_type, params] = presets[f.preset]; return api('POST', ws('/automatisations'), { name: f.name, every_minutes: Number(f.every), action_type, params }); }, 'Automatisation créée') },
+      h('form', { class: 'card inline', onsubmit: act((ev) => { const f = formData(ev.target); const presets = { ...Object.fromEntries(channels.map((c) => [`canal-${c.id}`, ['message.envoyer', { channelId: c.id, text: 'Point automatique', include: 'indicateurs' }]])), analyse: ['analyse.lancer', {}], rapport: ['document.generer', { template: 'rapport', brief: 'Point périodique' }], export: ['export.csv', { dataset: 'transactions' }] }; const [action_type, params] = presets[f.preset]; return api('POST', ws('/automatisations'), { name: f.name, every_minutes: Number(f.every), action_type, params }); }, 'Automatisation créée') },
         h('label', { class: 'grow' }, 'Nom', h('input', { name: 'name', required: true, maxLength: 120, placeholder: 'Ex. : analyse quotidienne' })),
-        h('label', {}, 'Action', h('select', { name: 'preset' }, h('option', { value: 'analyse' }, 'Lancer une analyse'), h('option', { value: 'rapport' }, 'Générer un rapport d\'activité'), h('option', { value: 'export' }, 'Exporter les opérations (CSV)'))),
+        h('label', {}, 'Action', h('select', { name: 'preset' }, h('option', { value: 'analyse' }, 'Lancer une analyse'), h('option', { value: 'rapport' }, 'Générer un rapport d\'activité'), h('option', { value: 'export' }, 'Exporter les opérations (CSV)'), channels.map((c) => h('option', { value: `canal-${c.id}` }, `Envoyer les indicateurs sur ${c.name} (sensible)`)))),
         h('label', {}, 'Fréquence', h('select', { name: 'every' }, h('option', { value: 60 }, 'Toutes les heures'), h('option', { value: 1440, selected: true }, 'Tous les jours'), h('option', { value: 10080 }, 'Toutes les semaines'))),
         h('button', { class: 'primary' }, 'Créer')),
       h('div', { class: 'card stack' }, h('h2', {}, `Automatisations (${list.length})`),
@@ -336,6 +336,42 @@ const views = {
             h('button', { onclick: act(() => api('PATCH', ws(`/automatisations/${a.id}`), { enabled: !a.enabled })) }, a.enabled ? 'Mettre en pause' : 'Réactiver'),
             a.sensitivity === 'sensible' ? h('label', { class: 'check small' }, h('input', { type: 'checkbox', checked: Boolean(a.preauthorized), onchange: act((ev) => { if (ev.target.checked && !window.confirm('Autoriser cette automatisation à exécuter son action sensible sans vous redemander à chaque fois ?')) { ev.target.checked = false; return null; } return api('PATCH', ws(`/automatisations/${a.id}`), { preauthorized: ev.target.checked }); }) }), 'Autorisation permanente') : null,
             h('button', { class: 'link danger', onclick: act(() => api('DELETE', ws(`/automatisations/${a.id}`)), 'Automatisation supprimée') }, 'Supprimer')))) : empty('Aucune automatisation.')));
+  },
+
+  async connexions() {
+    const owner = !state.accounts || state.workspace.role === 'proprietaire';
+    const [channels, tokens] = await Promise.all([api('GET', ws('/canaux')), owner ? api('GET', ws('/acces')) : []]);
+    const origin = window.location.origin; const fresh = state.freshToken?.ws === state.wsId ? state.freshToken : null;
+    const access = (usage, title, intro, show) => {
+      const active = tokens.find((t) => t.purpose === usage); const mine = fresh?.purpose === usage ? fresh.token : null;
+      return h('div', { class: 'card stack' }, h('h2', {}, title), h('p', { class: 'muted small' }, intro),
+        mine ? h('div', { class: 'notice info stack' }, h('strong', {}, 'À copier maintenant : cette adresse ne sera plus affichée.'), show(mine)) : active ? h('p', { class: 'small' }, `Accès actif depuis le ${fdate(active.created_at)}. L'adresse n'est pas conservée en clair : régénérez-la si vous l'avez perdue.`) : empty('Aucun accès actif.'),
+        owner ? h('div', { class: 'row' },
+          h('button', { onclick: act(async () => { if (active && !window.confirm('Générer une nouvelle adresse désactive l\'ancienne. Continuer ?')) return; const t = await api('POST', ws('/acces'), { usage }); state.freshToken = { ...t, ws: state.wsId }; }) }, active ? 'Régénérer l\'adresse' : 'Activer'),
+          active ? h('button', { class: 'link danger', onclick: act(async () => { await api('POST', ws('/acces/revoquer'), { usage }); state.freshToken = null; }, 'Accès révoqué') }, 'Révoquer') : null) : h('p', { class: 'muted small' }, 'Seul un propriétaire peut gérer cet accès.'));
+    };
+    return page('Connexions', 'Relier OMNIA à vos autres outils. Rien ne sort sans autorisation ; ce qui entre est tracé.', null,
+      h('div', { class: 'card stack' }, h('h2', {}, `Canaux de messagerie (${channels.length})`),
+        h('p', { class: 'muted small' }, 'Slack, Discord, Teams ou tout outil acceptant un webhook entrant. Chaque envoi est une action sensible soumise à autorisation.'),
+        channels.map((c) => h('div', { class: 'item stack' },
+          h('div', { class: 'row between' }, h('span', {}, h('strong', {}, c.name), h('span', { class: 'muted small' }, ` ${c.typeLabel} · ${c.destination}`)), owner ? h('button', { class: 'link danger', onclick: act(() => api('DELETE', ws(`/canaux/${c.id}`)), 'Canal supprimé') }, 'Supprimer') : null),
+          h('form', { class: 'inline', onsubmit: act((ev) => { const f = formData(ev.target); return api('POST', ws('/actions'), { type: 'message.envoyer', params: { channelId: c.id, text: f.text, include: f.include } }); }, 'Message préparé — il attend une autorisation dans « Actions »') },
+            h('label', { class: 'grow' }, 'Message', h('input', { name: 'text', required: true, maxLength: 3000 })),
+            h('label', {}, 'Joindre', h('select', { name: 'include' }, h('option', { value: 'aucun' }, 'Rien'), h('option', { value: 'indicateurs' }, 'Indicateurs clés'))), h('button', {}, 'Préparer l\'envoi')))),
+        owner ? h('form', { class: 'inline', onsubmit: act((ev) => api('POST', ws('/canaux'), formData(ev.target)), 'Canal ajouté') },
+          h('label', {}, 'Nom', h('input', { name: 'name', required: true, maxLength: 80, placeholder: 'Ex. : #direction' })),
+          h('label', {}, 'Type', h('select', { name: 'type' }, state.meta.channelTypes.map((t) => h('option', { value: t.id }, t.label)))),
+          h('label', { class: 'grow' }, 'URL du webhook entrant (https)', h('input', { name: 'url', type: 'url', required: true, placeholder: 'https://hooks.…' })), h('button', {}, 'Ajouter le canal')) : null),
+      h('div', { class: 'grid cols-2' },
+        access('entrant', 'Entrée de données', 'Une adresse à donner à Zapier, n8n, Make ou à vos propres scripts pour créer tâches, opérations et notes dans cet espace (60 requêtes par minute au maximum).',
+          (t) => [h('code', {}, `${origin}/api/entrant/${t}`), h('p', { class: 'small' }, 'Exemple de corps JSON (POST) :'), h('code', {}, '{"type":"tache","titre":"Rappeler le client","echeance":"2027-01-15"}'), h('code', {}, '{"type":"operation","montant":-49.9,"libelle":"Abonnement","categorie":"abonnements"}'), h('code', {}, '{"type":"note","titre":"Compte rendu","contenu":"…"}')]),
+        access('calendrier', 'Calendrier', 'Une adresse d\'abonnement (iCalendar) pour voir les échéances des tâches et projets dans Google Agenda, Outlook ou Apple Calendrier. Lecture seule.',
+          (t) => [h('code', {}, `${origin}/api/calendrier/${t}.ics`)])),
+      h('div', { class: 'card stack' }, h('h2', {}, 'Stripe'),
+        state.meta.stripe ? [h('p', { class: 'muted small' }, 'Importe les mouvements de solde (montants nets, frais déduits) comme opérations financières. Lecture seule ; les mouvements déjà importés ne sont pas dupliqués.'),
+          h('form', { class: 'inline', onsubmit: act((ev) => api('POST', ws('/actions'), { type: 'stripe.importer', params: { days: Number(formData(ev.target).days) } }), (a) => toast(a.status === 'reussie' ? `${a.result.importees} mouvement(s) importé(s), ${a.result.deja_presentes} déjà présent(s)${a.result.autre_devise ? `, ${a.result.autre_devise} ignoré(s) (autre devise)` : ''}` : `Échec : ${a.error}`, a.status !== 'reussie')) },
+            h('label', {}, 'Période', h('select', { name: 'days' }, h('option', { value: 30 }, '30 derniers jours'), h('option', { value: 90 }, '90 derniers jours'), h('option', { value: 365 }, '12 derniers mois'))), h('button', {}, 'Importer depuis Stripe'))]
+          : h('p', { class: 'muted small' }, 'Non configuré. Pour l\'activer, démarrez OMNIA avec OMNIA_STRIPE_KEY (clé restreinte, lecture des « balance transactions » uniquement).')));
   },
 
   async journal() {

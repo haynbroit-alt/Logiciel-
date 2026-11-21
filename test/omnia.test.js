@@ -260,3 +260,92 @@ test('comptes et rôles : connexion, cloisonnement, droits par rôle, journal no
     assert.equal((await anon('POST', '/api/session', { email: 'alice@ex.fr', password: 'motdepasse-long' })).status, 429);
   } finally { server.close(); }
 });
+
+test('canaux : format propre à chaque outil, envoi soumis à autorisation, URL masquée', async () => {
+  const { k } = setup();
+  const w = await k.createWorkspace({ name: 'Test' });
+  const sent = []; const real = globalThis.fetch; globalThis.fetch = async (url, init) => { sent.push({ url: String(url), body: JSON.parse(init.body) }); return new Response('ok'); };
+  try {
+    const slack = k.hub.createChannel(w.id, { name: '#direction', type: 'slack', url: 'https://93.184.216.34/services/SECRET' });
+    const discord = k.hub.createChannel(w.id, { name: 'équipe', type: 'discord', url: 'https://93.184.216.34/api/webhooks/SECRET' });
+    assert.ok(!JSON.stringify(k.hub.listChannels(w.id)).includes('SECRET'), 'l\'URL complète n\'est jamais renvoyée');
+    assert.throws(() => k.hub.createChannel(w.id, { name: 'x', type: 'slack', url: 'http://93.184.216.34/x' }), /https/);
+    assert.throws(() => k.hub.createChannel(w.id, { name: 'x', type: 'fax', url: 'https://a.example/x' }), /Type/);
+    const a = await k.execution.request(w, { type: 'message.envoyer', params: { channelId: slack.id, text: 'Bonjour', include: 'indicateurs' } });
+    assert.equal(a.status, 'en_attente'); assert.equal(sent.length, 0);
+    assert.equal((await k.execution.approve(w, a.id)).status, 'reussie');
+    assert.match(sent[0].body.text, /^Bonjour\n• taches ouvertes : 0/);
+    const b = await k.execution.request(w, { type: 'message.envoyer', params: { channelId: discord.id, text: 'Salut' } });
+    await k.execution.approve(w, b.id); assert.deepEqual(sent[1].body, { content: 'Salut' });
+    const c = await k.execution.request(w, { type: 'message.envoyer', params: { channelId: slack.id, text: 'Trop tard' } });
+    k.hub.deleteChannel(w.id, slack.id);
+    assert.equal((await k.execution.approve(w, c.id)).status, 'echouee', 'canal supprimé entre la demande et l\'autorisation');
+  } finally { globalThis.fetch = real; }
+});
+
+test('entrée de données et calendrier : accès par jeton, régénération, révocation', async () => {
+  const { k, config } = setup({ token: 'secret' });
+  const server = createApp(config, k); await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const post = (p, body) => fetch(base + p, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    const w = await k.createWorkspace({ name: 'Test' }); const other = await k.createWorkspace({ name: 'Autre' });
+    const { token } = k.hub.issueToken(w.id, 'entrant');
+    assert.equal((await post(`/api/entrant/${'x'.repeat(32)}`, { type: 'tache', titre: 'non' })).status, 404);
+    const r = await post(`/api/entrant/${token}`, { elements: [{ type: 'tache', titre: 'Rappeler; le client', echeance: d(-3) }, { type: 'operation', montant: -49.9, libelle: 'Abo', date: d(1) }, { type: 'note', titre: 'CR', contenu: 'texte' }] });
+    assert.equal(r.status, 200, 'fonctionne sans le jeton global ni session'); assert.equal((await r.json()).recus, 3);
+    assert.equal((await post(`/api/entrant/${token}`, { elements: [{ type: 'tache', titre: 'ok' }, { type: 'inconnu' }] })).status, 400);
+    const data = k.data(w.id);
+    assert.equal(data.tasks.length, 1, 'un lot invalide n\'est pas enregistré à moitié'); assert.equal(data.transactions[0].amount, -49.9); assert.equal(k.data(other.id).tasks.length, 0);
+    assert.ok(k.audit.list(w.id).some((e) => e.event === 'entree.recue' && e.actor === 'entree-externe'));
+    // Calendrier : jeton distinct, format iCalendar, lecture seule.
+    assert.equal((await fetch(`${base}/api/calendrier/${token}.ics`)).status, 404, 'un jeton d\'entrée n\'ouvre pas le calendrier');
+    const cal = k.hub.issueToken(w.id, 'calendrier').token;
+    const ics = await fetch(`${base}/api/calendrier/${cal}.ics`);
+    assert.match(ics.headers.get('content-type'), /text\/calendar/);
+    const text = await ics.text();
+    assert.match(text, /BEGIN:VEVENT\r\n/); assert.ok(text.includes(String.raw`SUMMARY:Rappeler\; le client`), 'le point-virgule est échappé'); assert.match(text, new RegExp(`DTSTART;VALUE=DATE:${d(-3).replace(/-/g, '')}`));
+    // Régénérer invalide l'ancienne adresse ; révoquer ferme l'accès.
+    const next = k.hub.issueToken(w.id, 'entrant').token;
+    assert.equal((await post(`/api/entrant/${token}`, { type: 'note', titre: 'vieux' })).status, 404);
+    assert.equal((await post(`/api/entrant/${next}`, { type: 'note', titre: 'neuf' })).status, 200);
+    k.hub.revokeToken(w.id, 'entrant');
+    assert.equal((await post(`/api/entrant/${next}`, { type: 'note', titre: 'fermé' })).status, 404);
+    assert.equal((await fetch(`${base}/api/espaces/${w.id}/acces`)).status, 401, 'la gestion des accès reste protégée');
+  } finally { server.close(); }
+});
+
+test('Stripe : import en lecture seule, montants nets, sans doublon, devise respectée', async () => {
+  const { k } = setup({ stripeKey: 'rk_test_x' });
+  const w = await k.createWorkspace({ name: 'Test' });
+  const calls = []; const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { calls.push({ url: String(url), auth: init.headers.authorization, method: init.method ?? 'GET' }); return Response.json({ has_more: false, data: [
+    { id: 'txn_1', net: 9710, currency: 'eur', created: Math.floor(Date.now() / 1000) - 86400, type: 'charge', description: 'Commande 12' },
+    { id: 'txn_2', net: -2500, currency: 'eur', created: Math.floor(Date.now() / 1000) - 86400, type: 'refund', description: null },
+    { id: 'txn_3', net: 5000, currency: 'usd', created: Math.floor(Date.now() / 1000), type: 'charge' }] }); };
+  try {
+    const a = await k.execution.request(w, { type: 'stripe.importer', params: { days: 30 } });
+    assert.equal(a.status, 'reussie'); assert.deepEqual([a.result.importees, a.result.autre_devise], [2, 1]);
+    assert.deepEqual(k.data(w.id).transactions.map((t) => t.amount).sort((x, y) => x - y), [-25, 97.1]);
+    assert.equal((await k.execution.request(w, { type: 'stripe.importer', params: {} })).result.deja_presentes, 2);
+    assert.equal(k.data(w.id).transactions.length, 2);
+    assert.ok(calls.every((c) => c.method === 'GET' && c.auth === 'Bearer rk_test_x' && c.url.startsWith('https://api.stripe.com/v1/balance_transactions')));
+  } finally { globalThis.fetch = real; }
+  const none = setup(); const w2 = await none.k.createWorkspace({ name: 'Sans clé' });
+  assert.match((await none.k.execution.request(w2, { type: 'stripe.importer', params: {} })).error, /OMNIA_STRIPE_KEY/);
+});
+
+test('IA : plusieurs fournisseurs essayés dans l\'ordre, chacun avec ses réglages', async () => {
+  const seen = []; const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { seen.push({ url: String(url), auth: init.headers.authorization }); return String(url).includes('11434') ? new Response('en panne', { status: 500 }) : Response.json({ choices: [{ message: { content: 'réponse' } }] }); };
+  try {
+    const ai = createAI({ provider: 'ollama, mistral' }, { OMNIA_AI_MISTRAL_API_KEY: 'cle-mistral' });
+    assert.equal(ai.provider, 'ollama → mistral');
+    const r = await ai.complete({ system: 's', prompt: 'p' });
+    assert.equal(r.provider, 'mistral'); assert.match(r.skipped[0], /ollama : .*500/);
+    assert.equal(seen[0].auth, undefined, 'la clé d\'un fournisseur n\'est pas envoyée à un autre'); assert.equal(seen[1].auth, 'Bearer cle-mistral');
+  } finally { globalThis.fetch = real; }
+  assert.throws(() => createAI({ provider: 'ollama,inconnu' }), /inconnu/);
+  assert.throws(() => createAI({ provider: 'ollama,mistral' }, {}), /OMNIA_AI_API_KEY|requis/);
+  assert.equal(createAI({ provider: 'local' }).generative, false);
+});

@@ -8,24 +8,38 @@ import { createOpenAICompatibleProvider, PRESETS } from './openai-compatible.js'
 
 export const PROVIDERS = ['local', 'anthropic', ...Object.keys(PRESETS), 'compatible'];
 
-export function createAI(cfg = {}) {
-  const name = (cfg.provider ?? 'local').toLowerCase();
-  let provider = null;
-  if (name === 'anthropic') provider = createAnthropicProvider(cfg);
-  else if (name !== 'local') {
-    if (!PRESETS[name] && name !== 'compatible') throw new Error(`Fournisseur d'IA inconnu : ${name}. Valeurs possibles : ${PROVIDERS.join(', ')}`);
-    provider = createOpenAICompatibleProvider(name, cfg);
-  }
+function createProvider(name, cfg) {
+  if (name === 'anthropic') return createAnthropicProvider(cfg);
+  if (!PRESETS[name] && name !== 'compatible') throw new Error(`Fournisseur d'IA inconnu : ${name}. Valeurs possibles : ${PROVIDERS.join(', ')}`);
+  return createOpenAICompatibleProvider(name, cfg);
+}
+
+// `provider` accepte une liste ordonnée (« ollama,mistral ») : chaque fournisseur est essayé à son tour.
+// Avec plusieurs fournisseurs, chacun lit ses propres réglages : OMNIA_AI_<NOM>_API_KEY, _MODEL, _BASE_URL.
+export function createAI(cfg = {}, env = {}) {
+  const names = [...new Set(String(cfg.provider ?? 'local').toLowerCase().split(',').map((s) => s.trim()).filter((s) => s && s !== 'local'))];
+  const own = (name, key) => env[`OMNIA_AI_${name.toUpperCase()}_${key}`] ?? '';
+  const chain = names.map((name) => ({
+    name,
+    impl: createProvider(name, names.length === 1
+      ? { ...cfg, apiKey: own(name, 'API_KEY') || cfg.apiKey, model: own(name, 'MODEL') || cfg.model, baseUrl: own(name, 'BASE_URL') || cfg.baseUrl }
+      : { apiKey: own(name, 'API_KEY'), model: own(name, 'MODEL'), baseUrl: own(name, 'BASE_URL') }),
+  }));
   return {
-    provider: name,
-    model: provider?.model ?? null,
-    generative: Boolean(provider),
+    provider: names.join(' → ') || 'local',
+    providers: names,
+    model: chain.map((c) => c.impl.model).join(' → ') || null,
+    generative: chain.length > 0,
     // Retourne { text, provider, model } ou lève une erreur ; les appelants basculent alors
     // sur le mode local et le signalent à l'utilisateur (transparence sur l'origine des résultats).
     async complete({ system, prompt, maxTokens = 4000 }) {
-      if (!provider) throw new Error('Aucun fournisseur d\'IA générative configuré');
-      const text = await provider.complete({ system, prompt, maxTokens });
-      return { text, provider: name, model: provider.model };
+      if (!chain.length) throw new Error('Aucun fournisseur d\'IA générative configuré');
+      const errors = [];
+      for (const { name, impl } of chain) {
+        try { return { text: await impl.complete({ system, prompt, maxTokens }), provider: name, model: impl.model, skipped: errors.length ? errors : undefined }; }
+        catch (e) { errors.push(`${name} : ${e.message}`); }
+      }
+      throw new Error(errors.join(' ; '));
     },
   };
 }
