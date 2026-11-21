@@ -6,7 +6,7 @@ Un seul logiciel, tous les secteurs : OMNIA transforme les besoins, problèmes e
 (entreprise, commerce, indépendant, association, collectivité, particulier) en constats chiffrés,
 en recommandations comparées et en actions concrètes — exécutées uniquement avec votre accord.
 
-> Version 0.5 — socle fonctionnel. La section [État réel](#état-réel-de-cette-version) dit précisément ce qui est fait et ce qui ne l'est pas.
+> Version 0.6 — socle fonctionnel. La section [État réel](#état-réel-de-cette-version) dit précisément ce qui est fait et ce qui ne l'est pas.
 
 ## Démarrer
 
@@ -15,7 +15,7 @@ Prérequis : Node.js ≥ 22.13. Aucune dépendance à installer, aucun compte, a
 ```bash
 npm run demo    # facultatif : crée un espace d'exemple (atelier de menuiserie)
 npm start       # http://localhost:4747
-npm test        # 23 tests
+npm test        # 29 tests
 ```
 
 Les données restent sur votre machine, dans `data/omnia.db` (SQLite).
@@ -35,6 +35,28 @@ Les données restent sur votre machine, dans `data/omnia.db` (SQLite).
 Constats détectés aujourd'hui : tâches en retard, surcharge, tâches dormantes, projets à risque ou sans plan,
 solde négatif, hausse d'un poste de dépense, charges récurrentes, paiements en double, dépendance à un client,
 revenus en baisse ou en hausse.
+
+## Parler à OMNIA
+
+L'assistant comprend une demande formulée comme à un collègue et la traduit en actions à valider :
+
+| Vous écrivez | OMNIA propose |
+|---|---|
+| « Rappelle-moi de relancer Dupont vendredi, c'est urgent » | une tâche « Relancer Dupont », vendredi, priorité haute |
+| « J'ai payé 45,90 € chez Leroy Merlin hier pour des vis » | une dépense de 45,90 €, tiers Leroy Merlin, datée d'hier |
+| « Reçu 1 200 euros de Mme Roche le 12/11 » | un revenu de 1 200 € |
+| « Prépare un plan d'action pour la rentrée » | la production du document |
+| « Par quoi commencer ? » | vos priorités classées, avec la raison de chaque rang |
+| « Combien ai-je dépensé ? » | la réponse chiffrée, par poste |
+
+Plusieurs demandes peuvent tenir dans un même message. **Rien n'est exécuté sans validation**, et une question ne
+déclenche jamais d'action. Sans IA générative, la compréhension repose sur des tournures françaises reconnues : une
+formulation inhabituelle peut ne pas être comprise, auquel cas OMNIA répond comme à une question. Avec une IA, le
+modèle établit le plan, que le noyau valide action par action ; un modèle ne peut proposer que des actions internes,
+jamais un envoi vers l'extérieur.
+
+Le tableau de bord affiche les **priorités du moment** : autorisations en attente, puis retards, échéances proches
+et recommandations.
 
 ## Architecture : un noyau central
 
@@ -147,7 +169,8 @@ Autres variables : `OMNIA_PORT` (4747), `OMNIA_DATA_DIR` (`./data`), `OMNIA_SCHE
 ## État réel de cette version
 
 **Fait et vérifié** (tests automatisés + parcours complet dans un navigateur) : espaces multiples cloisonnés, comptes
-utilisateurs avec rôles par espace, noyau à modules (registre, événements, modules externes, clé d'API), gestion
+utilisateurs avec rôles par espace, compréhension des demandes en langage courant et classement des priorités,
+noyau à modules (registre, événements, modules externes, clé d'API), gestion
 des tâches et projets, finances avec import CSV, mémoire documentaire, analyse, recommandations, exécution avec
 autorisations, automatisations périodiques, journal d'audit, génération de documents et assistant en mode local,
 courbe d'évolution des indicateurs, sauvegarde et restauration d'un espace (JSON), import de fichiers texte dans la

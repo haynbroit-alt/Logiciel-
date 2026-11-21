@@ -19,19 +19,37 @@ const ids = (v, name) => {
   return v;
 };
 const STATUSES = ['a_faire', 'en_cours', 'fait'];
+const day = (v, name) => {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v) || Number.isNaN(Date.parse(v)) || new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) !== v) throw new Error(`Paramètre « ${name} » invalide (AAAA-MM-JJ)`);
+  return v;
+};
 
-export const BUILTIN_ACTION_TYPES = ['tache.creer', 'tache.modifier_lot', 'tache.prioriser_projet', 'document.generer', 'email.brouillon', 'export.csv', 'analyse.lancer', 'message.envoyer', 'stripe.importer', 'webhook.envoyer'];
+export const BUILTIN_ACTION_TYPES = ['operation.enregistrer', 'tache.creer', 'tache.modifier_lot', 'tache.prioriser_projet', 'document.generer', 'email.brouillon', 'export.csv', 'analyse.lancer', 'message.envoyer', 'stripe.importer', 'webhook.envoyer'];
 
 export function createExecution({ db, audit, services, registry, events, moduleApi }) {
   const TYPES = {
     'tache.creer': {
       label: 'Créer une tâche', sensitivity: 'interne',
-      validate: (p) => ({
-        title: str(p.title, 'title', 300), notes: typeof p.notes === 'string' ? p.notes.slice(0, 2000) : '',
-        due_in_days: int(p.due_in_days, 'due_in_days', 0, 3650, 7), priority: int(p.priority, 'priority', 1, 3, 2),
-        project_id: p.project_id == null ? null : int(p.project_id, 'project_id', 1, Number.MAX_SAFE_INTEGER),
-      }),
-      run: (ws, p) => ({ taskId: services.createTask(ws.id, { ...p, due_date: services.inDays(p.due_in_days), origin: 'omnia' }).id }),
+      // Échéance : une date précise (due_date), un délai en jours (due_in_days, 7 par défaut) ou aucune (sans_echeance).
+      validate: (p) => {
+        const out = { title: str(p.title, 'title', 300), notes: typeof p.notes === 'string' ? p.notes.slice(0, 2000) : '', priority: int(p.priority, 'priority', 1, 3, 2),
+          project_id: p.project_id == null ? null : int(p.project_id, 'project_id', 1, Number.MAX_SAFE_INTEGER) };
+        if (p.due_date != null) out.due_date = day(p.due_date, 'due_date');
+        else if (p.sans_echeance === true) out.sans_echeance = true;
+        else out.due_in_days = int(p.due_in_days, 'due_in_days', 0, 3650, 7);
+        return out;
+      },
+      run: (ws, { due_in_days, sans_echeance, ...p }) => ({ taskId: services.createTask(ws.id, { ...p, due_date: p.due_date ?? (sans_echeance ? null : services.inDays(due_in_days)), origin: 'omnia' }).id }),
+    },
+    'operation.enregistrer': {
+      label: 'Enregistrer une opération financière', sensitivity: 'interne',
+      validate: (p) => {
+        const amount = Number(p.amount);
+        if (!Number.isFinite(amount) || amount === 0 || Math.abs(amount) >= 1e12) throw new Error('Paramètre « amount » invalide');
+        const opt = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+        return { amount: Math.round(amount * 100) / 100, date: day(p.date, 'date'), label: opt(p.label, 300), category: opt(p.category, 80), counterparty: opt(p.counterparty, 200) };
+      },
+      run: (ws, p) => ({ transactionId: services.createTransaction(ws.id, p).id }),
     },
     'tache.modifier_lot': {
       label: 'Modifier plusieurs tâches', sensitivity: 'interne',
@@ -135,6 +153,8 @@ export function createExecution({ db, audit, services, registry, events, moduleA
   return {
     types: () => [...Object.entries(TYPES).map(([type, t]) => ({ type, label: t.label, sensitivity: t.sensitivity, module: null })), ...(registry?.actions() ?? [])],
     sensitivityOf: (type) => typeDef(type)?.sensitivity,
+    // Vérifie des paramètres sans rien exécuter (utilisé pour valider un plan proposé).
+    validate(type, params) { const def = typeDef(type); if (!def) throw new Error(`Type d'action inconnu : ${type}`); return def.validate(params ?? {}); },
     list: (wsId, status) => (status
       ? db.all('SELECT * FROM actions WHERE workspace_id = ? AND status = ? ORDER BY id DESC LIMIT 200', wsId, status)
       : db.all('SELECT * FROM actions WHERE workspace_id = ? ORDER BY id DESC LIMIT 200', wsId)).map(row),

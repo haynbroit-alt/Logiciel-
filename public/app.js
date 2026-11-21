@@ -152,6 +152,22 @@ const page = (title, subtitle, actions, ...content) => [
 ];
 const empty = (text) => h('p', { class: 'muted' }, text);
 
+// Actions comprises dans une demande : rien ne s'exécute sans un clic de validation.
+function proposalList(m) {
+  if (!m.proposals?.length) return null;
+  const run = (p) => act(async () => {
+    const a = await api('POST', ws('/actions'), { type: p.type, params: p.params });
+    p.state = a.status; p.error = a.error;
+    if (a.status === 'echouee') throw new Error(a.error);
+  });
+  const open = m.proposals.filter((p) => p.state === 'proposee');
+  return h('div', { class: 'stack' },
+    m.proposals.map((p) => h('div', { class: `item row between ${p.state === 'proposee' ? 'best' : ''}` }, h('span', {}, p.summary),
+      p.state === 'proposee' ? h('div', { class: 'row' }, h('button', { class: 'primary', onclick: run(p) }, 'Valider'), h('button', { class: 'link', onclick: () => { p.state = 'ecartee'; render(); } }, 'Écarter'))
+        : badge(p.state === 'ecartee' ? 'refusee' : p.state, p.state === 'ecartee' ? 'Écartée' : p.state === 'reussie' ? 'Fait' : L(p.state)))),
+    open.length > 1 ? h('div', {}, h('button', { onclick: act(async () => { for (const p of open) { const a = await api('POST', ws('/actions'), { type: p.type, params: p.params }); p.state = a.status; p.error = a.error; } }, 'Actions validées') }, `Tout valider (${open.length})`)) : null);
+}
+
 function recommendationCard(r, compact = false) {
   const options = r.options.map((o, i) => h('div', { class: `item ${i === r.best_option ? 'best' : ''}` },
     h('div', { class: 'row between' },
@@ -195,6 +211,8 @@ const views = {
       h('div', { class: 'grid kpis' },
         kpi('Revenus (30 j)', money(k.revenus_30j, cur)), kpi('Dépenses (30 j)', money(k.depenses_30j, cur)), kpi('Solde (30 j)', money(k.solde_30j, cur), k.solde_30j < 0),
         kpi('Tâches ouvertes', k.taches_ouvertes), kpi('En retard', k.taches_en_retard, k.taches_en_retard > 0), kpi('Terminées (30 j)', k.taches_terminees_30j)),
+      d.priorities.length ? h('div', { class: 'card stack' }, h('h2', {}, 'Priorités du moment'),
+        h('ol', { class: 'prio' }, d.priorities.map((x) => h('li', {}, h('strong', {}, x.title), ' ', badge(x.kind === 'autorisation' ? 'en_attente' : x.kind === 'recommandation' ? 'opportunite' : 'probleme', x.kind), h('div', { class: 'muted small' }, x.why))))) : null,
       d.gaps.length ? h('div', { class: 'notice info stack', role: 'note' }, h('strong', {}, 'Pour une analyse plus complète'), d.gaps.map((g) => h('span', { class: 'small' }, g))) : null,
       h('div', { class: 'grid cols-2' },
         h('div', { class: 'card stack' }, h('h2', {}, `Constats (${d.insights.length})`),
@@ -217,15 +235,15 @@ const views = {
   },
 
   async assistant() {
-    const log = h('div', { class: 'chat' }, state.chat.length ? state.chat.map((m) => h('div', { class: `bubble ${m.role}` }, m.role === 'user' ? m.text : [md(m.text), sourceNote(m.source, m.fallbackReason), m.sources?.length ? h('p', { class: 'muted small' }, 'Documents consultés : ', m.sources.map((s) => s.title).join(', ')) : null])) : empty('Posez une question sur votre activité : priorités, dépenses, risques, prochaines étapes…'));
-    return page('Assistant', state.meta.ai.generative ? `Réponses rédigées par ${state.meta.ai.provider} (${state.meta.ai.model}) à partir de vos données.` : 'Mode local : synthèses construites à partir de vos données, sans IA générative.', null,
+    const log = h('div', { class: 'chat' }, state.chat.length ? state.chat.map((m) => h('div', { class: `bubble ${m.role}` }, m.role === 'user' ? m.text : [md(m.text), sourceNote(m.source, m.fallbackReason), m.sources?.length ? h('p', { class: 'muted small' }, 'Documents consultés : ', m.sources.map((s) => s.title).join(', ')) : null, proposalList(m)])) : empty('Dites ce dont vous avez besoin, comme vous le diriez à un collègue : une chose à ne pas oublier, une dépense à noter, un document à préparer, une question sur vos chiffres ou vos priorités. OMNIA propose les actions ; vous validez.'));
+    return page('Assistant', state.meta.ai.generative ? `Réponses rédigées par ${state.meta.ai.provider} (${state.meta.ai.model}) à partir de vos données.` : 'Mode local : demandes comprises par tournures reconnues, réponses construites à partir de vos données, sans IA générative.', null,
       log,
       h('form', { class: 'card inline', onsubmit: act(async (ev) => {
         const question = formData(ev.target).question.trim(); if (!question) return;
         state.chat.push({ role: 'user', text: question });
         const r = await api('POST', ws('/assistant'), { question });
-        state.chat.push({ role: 'omnia', text: r.answer, source: r.source, sources: r.sources, fallbackReason: r.fallbackReason });
-      }) }, h('label', { class: 'grow' }, 'Votre question', h('input', { name: 'question', required: true, maxLength: 2000, autocomplete: 'off', placeholder: 'Ex. : Quelles sont mes priorités cette semaine ?' })), h('button', { class: 'primary' }, 'Demander')));
+        state.chat.push({ role: 'omnia', text: r.answer, source: r.source, sources: r.sources, fallbackReason: r.fallbackReason, proposals: (r.proposals ?? []).map((x) => ({ ...x, state: 'proposee' })) });
+      }) }, h('label', { class: 'grow' }, 'Votre demande', h('input', { name: 'question', required: true, maxLength: 2000, autocomplete: 'off', placeholder: 'Ex. : Rappelle-moi de relancer Dupont vendredi · J\'ai payé 45 € chez Leroy hier · Quelles sont mes priorités ?' })), h('button', { class: 'primary' }, 'Demander')));
   },
 
   async decisions() {
