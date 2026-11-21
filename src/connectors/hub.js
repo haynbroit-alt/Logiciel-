@@ -10,7 +10,7 @@ export const CHANNEL_TYPES = {
   teams: { label: 'Microsoft Teams', body: (text) => ({ text }) },
   generique: { label: 'Webhook générique (Zapier, n8n, Make…)', body: (text, extra) => ({ source: 'OMNIA', message: text, ...extra }) },
 };
-export const TOKEN_PURPOSES = { entrant: 'Entrée de données', calendrier: 'Calendrier' };
+export const TOKEN_PURPOSES = { entrant: 'Entrée de données', calendrier: 'Calendrier', api: 'Clé d\'API' };
 const ZERO_DECIMAL = new Set(['bif', 'clp', 'djf', 'gnf', 'jpy', 'kmf', 'krw', 'mga', 'pyg', 'rwf', 'ugx', 'vnd', 'vuv', 'xaf', 'xof', 'xpf']);
 
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
@@ -130,7 +130,7 @@ export function createHub({ db, audit, config, fail, services }) {
     },
     sendToChannel,
     listTokens: (wsId) => db.all('SELECT purpose, created_at FROM access_tokens WHERE workspace_id = ?', wsId),
-    issueToken, revokeToken, inbound, calendar, importStripe,
+    issueToken, revokeToken, resolveToken, inbound, calendar, importStripe,
     stripeConfigured: () => Boolean(config.stripeKey),
   };
 }

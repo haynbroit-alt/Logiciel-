@@ -1,6 +1,10 @@
 // Configuration lue depuis l'environnement. Les secrets (clés d'IA, jeton d'accès)
 // ne sont jamais stockés en base : ils restent dans l'environnement du processus.
 import path from 'node:path';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+const VERSION = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')).version;
 
 const env = process.env;
 
@@ -15,6 +19,8 @@ export function loadConfig(overrides = {}) {
     dataDir,
     dbPath: overrides.dbPath ?? env.OMNIA_DB ?? path.join(dataDir, 'omnia.db'),
     exportDir: path.join(dataDir, 'exports'),
+    modulesDir: env.OMNIA_MODULES_DIR ?? path.join(dataDir, 'modules'),
+    version: VERSION,
     ai: {
       provider: env.OMNIA_AI_PROVIDER ?? 'local',
       model: env.OMNIA_AI_MODEL ?? '',

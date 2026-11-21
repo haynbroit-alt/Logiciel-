@@ -4,7 +4,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadConfig, isLoopback } from './config.js';
 import { openDb } from './core/db.js';
 import { createAI } from './ai/index.js';
@@ -69,6 +69,7 @@ const ROUTES = [
   ['POST', '/api/espaces/:ws/acces', (k, p, b) => k.hub.issueToken(k.workspace(p.ws).id, b.usage)],
   ['POST', '/api/espaces/:ws/acces/revoquer', (k, p, b) => k.hub.revokeToken(k.workspace(p.ws).id, b.usage)],
   ['GET', '/api/meta', (k) => k.meta()],
+  ['GET', '/api/noyau', (k) => k.describe()],
   ['GET', '/api/espaces', (k, p, b, c) => {
     const all = k.listWorkspaces();
     if (!c.user) return all;
@@ -140,8 +141,12 @@ export function createApp(config, kernel) {
     // Deux régimes : sans compte, accès local ou par jeton ; avec comptes, session et rôles.
     const accounts = kernel.auth.enabled();
     const user = accounts ? kernel.auth.userForToken(sessionToken(req)) : null;
+    // Clé d'API d'un espace : un logiciel tiers s'adresse au noyau avec les droits d'un membre de cet
+    // espace, et de lui seul. Il ne peut donc ni autoriser une action sensible, ni toucher aux réglages.
+    const bearer = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+    const apiWs = !user && /^[A-Za-z0-9_-]{20,80}$/.test(bearer) ? kernel.hub.resolveToken(bearer, 'api') : null;
     const byAccessToken = /^\/api\/(entrant|calendrier)\//.test(url.pathname); // ces routes portent leur propre jeton
-    if (!accounts && !byAccessToken && !tokenOk(req)) return send(res, 401, { error: 'Jeton d\'accès requis' });
+    if (!accounts && !byAccessToken && !apiWs && !tokenOk(req)) return send(res, 401, { error: 'Jeton d\'accès requis' });
     if (req.method !== 'GET') {
       // Protection CSRF : JSON obligatoire, et l'origine, si le navigateur en envoie une, doit être la nôtre.
       if (!(req.headers['content-type'] ?? '').startsWith('application/json')) return send(res, 415, { error: 'Content-Type application/json requis' });
@@ -153,7 +158,12 @@ export function createApp(config, kernel) {
       const m = url.pathname.match(r.regex);
       if (!m) continue;
       const params = Object.fromEntries(r.names.map((n, i) => [n, n === 'jeton' ? m[i + 1] : id(m[i + 1])]));
-      if (accounts) {
+      if (apiWs) {
+        const scoped = params.ws === apiWs || (!params.ws && ['/api/meta', '/api/noyau'].includes(url.pathname));
+        if (!scoped) return send(res, 403, { error: 'Cette clé d\'API ne donne accès qu\'à son espace' });
+        const needed = params.ws ? requiredRole(req.method, url.pathname) : 'lecteur';
+        if (!roleAtLeast('membre', needed)) return send(res, 403, { error: `Une clé d'API agit comme « membre » : rôle « ${needed} » requis pour cette action` });
+      } else if (accounts) {
         if (r.access !== 'public' && !user) return send(res, 401, { error: 'Connexion requise', comptes: true });
         if (r.access === 'admin' && !user.admin) return send(res, 403, { error: 'Réservé aux administrateurs' });
         if (params.ws) {
@@ -165,7 +175,9 @@ export function createApp(config, kernel) {
       }
       const body = req.method === 'GET' ? {} : await readBody(req);
       const ctx = { accounts, user, headers: {}, sessionToken: sessionToken(req), clientKey: req.socket.remoteAddress ?? '', cookie };
-      const out = await requestContext.run({ actor: user?.name }, () => r.handler(kernel, params, body, ctx));
+      const out = await requestContext.run({ actor: apiWs ? 'api' : user?.name }, () => r.handler(kernel, params, body, ctx));
+      // Les événements nés de cette requête sont traités ensuite, sans faire attendre la réponse.
+      if (req.method !== 'GET') kernel.processEvents().catch((e) => console.error('[omnia] événements :', e.message));
       if (out?.__raw) { res.writeHead(200, { 'content-type': out.__raw.type, 'cache-control': 'no-store', ...SECURITY_HEADERS }); return res.end(out.__raw.body); }
       return send(res, out === undefined ? 204 : 200, out, ctx.headers);
     }
@@ -198,7 +210,19 @@ export function createApp(config, kernel) {
   });
 }
 
-export function start(overrides = {}) {
+// Modules externes : chaque fichier .js ou .mjs du dossier de modules exporte par défaut un module.
+// C'est du code exécuté avec les droits d'OMNIA : n'y placez que des modules de confiance.
+export async function loadExternalModules(kernel, dir) {
+  if (!fs.existsSync(dir)) return [];
+  const loaded = [];
+  for (const file of fs.readdirSync(dir).filter((f) => /\.m?js$/.test(f)).sort()) {
+    try { const mod = (await import(pathToFileURL(path.join(dir, file)).href)).default; loaded.push(kernel.registerModule(mod, 'externe').id); }
+    catch (e) { kernel.registry.reportError(file, e.message); console.error(`[omnia] module « ${file} » ignoré : ${e.message}`); }
+  }
+  return loaded;
+}
+
+export async function start(overrides = {}) {
   const config = loadConfig(overrides);
   const db = openDb(config.dbPath);
   const kernel = createKernel({ db, ai: createAI(config.ai, process.env), config });
@@ -206,6 +230,7 @@ export function start(overrides = {}) {
     db.close();
     throw new Error('Refus de démarrer : OMNIA_HOST expose le serveur au réseau sans protection. Définissez OMNIA_TOKEN, ou créez d\'abord un compte en accès local.');
   }
+  const external = await loadExternalModules(kernel, config.modulesDir);
   const server = createApp(config, kernel);
   let busy = false;
   const timer = setInterval(async () => {
@@ -214,11 +239,12 @@ export function start(overrides = {}) {
   }, config.schedulerSeconds * 1000);
   timer.unref();
   server.on('close', () => { clearInterval(timer); db.close(); });
-  return new Promise((resolve) => server.listen(config.port, config.host, () => resolve({ server, kernel, config, port: server.address().port })));
+  return new Promise((resolve) => server.listen(config.port, config.host, () => resolve({ server, kernel, config, external, port: server.address().port })));
 }
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  start().then(({ config, kernel, port }) => {
+  start().then(({ config, kernel, port, external }) => {
+    if (external.length) console.log(`Modules externes chargés : ${external.join(', ')}`);
     console.log(`OMNIA Ω — http://${isLoopback(config.host) ? 'localhost' : config.host}:${port}`);
     console.log(`IA : ${kernel.ai.generative ? `${kernel.ai.provider} (${kernel.ai.model})` : 'mode local, sans IA générative'} · données : ${config.dbPath}`);
   }).catch((e) => { console.error(e.message); process.exit(1); });

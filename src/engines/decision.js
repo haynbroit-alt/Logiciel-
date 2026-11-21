@@ -6,7 +6,7 @@
 const opt = (label, detail, impact, effort, actions) => ({ label, detail, impact, effort, score: Math.round((impact / effort) * 100) / 100, actions });
 const task = (title, extra = {}) => ({ type: 'tache.creer', params: { title, due_in_days: 7, priority: 2, ...extra } });
 
-const PLAYBOOKS = {
+export const PLAYBOOKS = {
   'taches.en_retard': (e) => [
     opt('Traiter d\'abord les 3 plus anciennes', 'Passe les trois tâches les plus en retard en priorité haute pour les solder cette semaine.', 4, 2,
       [{ type: 'tache.modifier_lot', params: { taskIds: e.taskIds.slice(0, 3), priority: 1 } }]),
@@ -98,10 +98,13 @@ export function weightOf(stats) {
 
 const KIND_FACTOR = { probleme: 1.1, risque: 1, opportunite: 0.8 };
 
-export function decide(insight, stats) {
-  const build = PLAYBOOKS[insight.rule];
+// `build` : la fonction de solutions que le registre associe à la règle du constat.
+export function decide(insight, stats, build) {
   if (!build) return null;
-  const options = build(insight.evidence).filter((o) => o.actions.length);
+  const options = (build(insight.evidence) ?? []).filter((o) => o && typeof o.label === 'string' && Array.isArray(o.actions) && o.actions.length).map((o) => {
+    const impact = Math.max(1, Math.min(5, Number(o.impact) || 1)); const effort = Math.max(1, Math.min(5, Number(o.effort) || 1));
+    return { label: o.label.slice(0, 200), detail: String(o.detail ?? '').slice(0, 500), impact, effort, score: Math.round((impact / effort) * 100) / 100, actions: o.actions.slice(0, 20) };
+  });
   if (!options.length) return null;
   const best = options.reduce((bi, o, i) => (o.score > options[bi].score ? i : bi), 0);
   const weight = weightOf(stats);

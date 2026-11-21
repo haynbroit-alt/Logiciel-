@@ -6,7 +6,7 @@ Un seul logiciel, tous les secteurs : OMNIA transforme les besoins, problèmes e
 (entreprise, commerce, indépendant, association, collectivité, particulier) en constats chiffrés,
 en recommandations comparées et en actions concrètes — exécutées uniquement avec votre accord.
 
-> Version 0.4 — socle fonctionnel. La section [État réel](#état-réel-de-cette-version) dit précisément ce qui est fait et ce qui ne l'est pas.
+> Version 0.5 — socle fonctionnel. La section [État réel](#état-réel-de-cette-version) dit précisément ce qui est fait et ce qui ne l'est pas.
 
 ## Démarrer
 
@@ -15,7 +15,7 @@ Prérequis : Node.js ≥ 22.13. Aucune dépendance à installer, aucun compte, a
 ```bash
 npm run demo    # facultatif : crée un espace d'exemple (atelier de menuiserie)
 npm start       # http://localhost:4747
-npm test        # 18 tests
+npm test        # 23 tests
 ```
 
 Les données restent sur votre machine, dans `data/omnia.db` (SQLite).
@@ -26,7 +26,7 @@ Les données restent sur votre machine, dans `data/omnia.db` (SQLite).
 |---|---|---|
 | 1. Décrire | Vous décrivez l'activité en langage libre | écran d'accueil |
 | 2. Comprendre | Type, secteur, objectifs, modules adaptés | `src/engines/understanding.js` |
-| 3. Analyser | 12 règles explicables sur les tâches, projets et finances ; chaque constat cite ses chiffres | `src/engines/analysis.js` |
+| 3. Analyser | 12 règles explicables apportées par les modules ; chaque constat cite ses chiffres | `src/modules/` |
 | 4. Décider | Plusieurs options par constat, notées impact / effort ; la meilleure est désignée | `src/engines/decision.js` |
 | 5. Agir | Actions exécutées par un registre unique, avec contrôle d'autorisation | `src/engines/execution.js` |
 | 6. Mesurer | Un constat qui disparaît est marqué résolu ; indicateurs archivés chaque jour | `src/core/kernel.js` |
@@ -36,17 +36,46 @@ Constats détectés aujourd'hui : tâches en retard, surcharge, tâches dormante
 solde négatif, hausse d'un poste de dépense, charges récurrentes, paiements en double, dépendance à un client,
 revenus en baisse ou en hausse.
 
-## Architecture
+## Architecture : un noyau central
+
+Le noyau ne contient aucune règle métier. Il orchestre ce que les modules lui déclarent, applique les autorisations,
+journalise et publie les événements. Tout — l'interface web comprise — passe par lui.
+
+```
+        interface web        logiciels tiers (clé d'API)        outils tiers (jeton d'entrée)
+              └───────────────────────┬───────────────────────────────┘
+                                  API du noyau
+   ┌──────────────────────────────────┴──────────────────────────────────┐
+   │  NOYAU   registre · bus d'événements · autorisations · journal · mémoire  │
+   └──┬───────────────┬───────────────┬────────────────┬─────────────────┘
+   modules         moteurs         connecteurs      fournisseurs d'IA
+   (règles, solutions,  (analyse, décision,  (canaux, calendrier,   (aucun, un ou
+    actions, réactions)   exécution, création)  Stripe, exports)       plusieurs)
+```
+
+- **Registre** (`src/core/registry.js`) : source unique de ce que le noyau sait faire. Les modules intégrés
+  (Gestion, Finances…) s'y déclarent exactement comme un module externe.
+- **Modules** : un objet qui apporte règles d'analyse, solutions, types d'action et réactions. Un fichier déposé
+  dans `data/modules/` (ou `OMNIA_MODULES_DIR`) est chargé au démarrage ; chaque espace choisit ses modules.
+  Exemple commenté : `examples/module-exemple.js`.
+- **Bus d'événements** (`src/core/events.js`) : tâche créée, constat détecté, action réussie… Les modules et les
+  automatisations y réagissent. Une réaction ne déclenche pas d'autres réactions : aucune boucle possible.
+- **Garde-fous imposés aux modules** : sensibilité de chaque action obligatoire, noms préfixés, accès limité à
+  l'espace concerné, enregistrement tout ou rien, règle défaillante signalée sans interrompre l'analyse.
+- **API** (`docs/API.md`) : un logiciel tiers pilote un espace avec une clé d'API, avec les droits d'un membre.
+  L'écran « Noyau » montre en direct ce qui est branché.
 
 ```
 src/
-  core/        noyau (kernel.js), mémoire SQLite (db.js), journal d'audit chaîné (audit.js), comptes et rôles (auth.js), import CSV
-  engines/     compréhension · analyse · décision · exécution · création (documents + assistant)
+  core/        noyau (kernel.js), registre, événements, mémoire SQLite, journal d'audit chaîné, comptes et rôles
+  engines/     compréhension · analyse · décision · exécution · création
+  modules/     modules intégrés (gestion.js, finances.js, packs sectoriels)
+  connectors/  canaux, entrée de données, calendrier, Stripe, exports
   ai/          abstraction multi-fournisseurs
-  modules/     registre des modules activables et packs sectoriels
-  connectors/  export CSV, brouillon d'e-mail, webhook sortant
-  server.js    API JSON + fichiers statiques
+  server.js    API du noyau + fichiers statiques
 public/        tableau de bord (JavaScript natif)
+examples/      module externe d'exemple
+docs/          référence de l'API
 ```
 
 ## Intelligence artificielle : au choix, ou sans
@@ -118,7 +147,7 @@ Autres variables : `OMNIA_PORT` (4747), `OMNIA_DATA_DIR` (`./data`), `OMNIA_SCHE
 ## État réel de cette version
 
 **Fait et vérifié** (tests automatisés + parcours complet dans un navigateur) : espaces multiples cloisonnés, comptes
-utilisateurs avec rôles par espace, gestion
+utilisateurs avec rôles par espace, noyau à modules (registre, événements, modules externes, clé d'API), gestion
 des tâches et projets, finances avec import CSV, mémoire documentaire, analyse, recommandations, exécution avec
 autorisations, automatisations périodiques, journal d'audit, génération de documents et assistant en mode local,
 courbe d'évolution des indicateurs, sauvegarde et restauration d'un espace (JSON), import de fichiers texte dans la
@@ -129,6 +158,9 @@ déclenché aucune exécution sur ce dépôt : les tests sont lancés à la main
 vers Slack, Discord et Teams. Ils sont testés contre des réponses simulées, pas contre les vrais services
 (aucune clé ni canal réel utilisé lors du développement). Les webhooks Teams de type « Workflows » attendent un
 autre format que celui envoyé ici.
+
+Les modules externes sont du code exécuté avec les droits d'OMNIA, sans bac à sable : ne chargez que des modules
+de confiance.
 
 **Pas encore fait** :
 - changement ou réinitialisation de mot de passe en libre-service, double authentification, HTTPS intégré ;
