@@ -1,0 +1,163 @@
+#!/usr/bin/env node
+// Serveur HTTP d'OMNIA Ω : API JSON + tableau de bord. Aucune dépendance externe.
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { loadConfig, isLoopback } from './config.js';
+import { openDb } from './core/db.js';
+import { createAI } from './ai/index.js';
+import { createKernel, OmniaError } from './core/kernel.js';
+
+const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
+const MAX_BODY = 5 * 1024 * 1024;
+
+const SECURITY_HEADERS = {
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+  'referrer-policy': 'no-referrer',
+  'content-security-policy': "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+};
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let size = 0; const chunks = [];
+    req.on('data', (c) => { size += c.length; if (size > MAX_BODY) { reject(new OmniaError('Requête trop volumineuse', 413)); req.destroy(); } else chunks.push(c); });
+    req.on('end', () => {
+      if (!chunks.length) return resolve({});
+      try { const v = JSON.parse(Buffer.concat(chunks).toString('utf8')); resolve(v && typeof v === 'object' && !Array.isArray(v) ? v : {}); } catch { reject(new OmniaError('JSON invalide')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+// Table de routage : [méthode, motif, gestionnaire(kernel, params, corps, requête)].
+const id = (v) => { const n = Number(v); if (!Number.isInteger(n) || n <= 0) throw new OmniaError('Identifiant invalide'); return n; };
+const ROUTES = [
+  ['GET', '/api/meta', (k) => k.meta()],
+  ['GET', '/api/espaces', (k) => k.listWorkspaces()],
+  ['POST', '/api/espaces', (k, p, b) => k.createWorkspace(b)],
+  ['GET', '/api/espaces/:ws', (k, p) => k.workspace(p.ws)],
+  ['PATCH', '/api/espaces/:ws', (k, p, b) => k.updateWorkspace(p.ws, b)],
+  ['DELETE', '/api/espaces/:ws', (k, p) => k.deleteWorkspace(p.ws)],
+  ['GET', '/api/espaces/:ws/tableau-de-bord', (k, p) => k.dashboard(p.ws)],
+  ['GET', '/api/espaces/:ws/donnees', (k, p) => k.data(k.workspace(p.ws).id)],
+  ['POST', '/api/espaces/:ws/analyse', (k, p) => k.runAnalysis(p.ws)],
+  ['POST', '/api/espaces/:ws/assistant', (k, p, b) => k.ask(p.ws, b.question)],
+  ['POST', '/api/espaces/:ws/projets', (k, p, b) => k.createProject(k.workspace(p.ws).id, b)],
+  ['PATCH', '/api/espaces/:ws/projets/:id', (k, p, b) => k.updateProject(k.workspace(p.ws).id, p.id, b)],
+  ['DELETE', '/api/espaces/:ws/projets/:id', (k, p) => k.deleteProject(k.workspace(p.ws).id, p.id)],
+  ['POST', '/api/espaces/:ws/taches', (k, p, b) => k.createTask(k.workspace(p.ws).id, b)],
+  ['PATCH', '/api/espaces/:ws/taches/:id', (k, p, b) => k.updateTask(k.workspace(p.ws).id, p.id, b)],
+  ['DELETE', '/api/espaces/:ws/taches/:id', (k, p) => k.deleteTask(k.workspace(p.ws).id, p.id)],
+  ['POST', '/api/espaces/:ws/taches-de-demarrage', (k, p, b) => k.addStarterTasks(p.ws, b.module)],
+  ['POST', '/api/espaces/:ws/operations', (k, p, b) => k.createTransaction(k.workspace(p.ws).id, b)],
+  ['POST', '/api/espaces/:ws/operations/import', (k, p, b) => k.importTransactions(k.workspace(p.ws).id, b.csv)],
+  ['DELETE', '/api/espaces/:ws/operations/:id', (k, p) => k.deleteTransaction(k.workspace(p.ws).id, p.id)],
+  ['POST', '/api/espaces/:ws/documents', (k, p, b) => k.createDocument(k.workspace(p.ws).id, b)],
+  ['POST', '/api/espaces/:ws/documents/generer', (k, p, b) => k.generate(k.workspace(p.ws).id, b.template, b.brief)],
+  ['DELETE', '/api/espaces/:ws/documents/:id', (k, p) => k.deleteDocument(k.workspace(p.ws).id, p.id)],
+  ['GET', '/api/espaces/:ws/recommandations', (k, p) => k.listRecommendations(k.workspace(p.ws).id)],
+  ['POST', '/api/espaces/:ws/recommandations/:id/accepter', (k, p, b) => k.acceptRecommendation(p.ws, p.id, b.option)],
+  ['POST', '/api/espaces/:ws/recommandations/:id/rejeter', (k, p) => k.rejectRecommendation(k.workspace(p.ws).id, p.id)],
+  ['POST', '/api/espaces/:ws/constats/:id/ignorer', (k, p) => k.dismissInsight(k.workspace(p.ws).id, p.id)],
+  ['GET', '/api/espaces/:ws/actions', (k, p) => k.execution.list(k.workspace(p.ws).id)],
+  ['POST', '/api/espaces/:ws/actions', (k, p, b) => k.execution.request(k.workspace(p.ws), { type: b.type, params: b.params, requestedBy: 'utilisateur' })],
+  ['POST', '/api/espaces/:ws/actions/:id/approuver', (k, p) => k.execution.approve(k.workspace(p.ws), p.id)],
+  ['POST', '/api/espaces/:ws/actions/:id/refuser', (k, p) => k.execution.reject(k.workspace(p.ws), p.id)],
+  ['GET', '/api/espaces/:ws/automatisations', (k, p) => k.listAutomations(k.workspace(p.ws).id)],
+  ['POST', '/api/espaces/:ws/automatisations', (k, p, b) => k.createAutomation(p.ws, b)],
+  ['PATCH', '/api/espaces/:ws/automatisations/:id', (k, p, b) => k.updateAutomation(k.workspace(p.ws).id, p.id, b)],
+  ['DELETE', '/api/espaces/:ws/automatisations/:id', (k, p) => k.deleteAutomation(k.workspace(p.ws).id, p.id)],
+  ['GET', '/api/espaces/:ws/journal', (k, p) => ({ entries: k.audit.list(k.workspace(p.ws).id), integrity: k.audit.verify() })],
+].map(([method, pattern, handler]) => {
+  const names = [];
+  const regex = new RegExp(`^${pattern.replace(/:(\w+)/g, (_, n) => { names.push(n); return '(\\d+)'; })}$`);
+  return { method, regex, names, handler };
+});
+
+export function createApp(config, kernel) {
+  const tokenOk = (req) => {
+    if (!config.token) return true;
+    const given = Buffer.from((req.headers.authorization ?? '').replace(/^Bearer\s+/i, ''));
+    const expected = Buffer.from(config.token);
+    return given.length === expected.length && crypto.timingSafeEqual(given, expected);
+  };
+  const send = (res, status, body, headers = {}) => {
+    const payload = body === undefined ? '' : JSON.stringify(body);
+    res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...SECURITY_HEADERS, ...headers });
+    res.end(payload);
+  };
+
+  async function handleApi(req, res, url) {
+    if (!tokenOk(req)) return send(res, 401, { error: 'Jeton d\'accès requis' });
+    if (req.method !== 'GET') {
+      // Protection CSRF : JSON obligatoire, et l'origine, si le navigateur en envoie une, doit être la nôtre.
+      if (!(req.headers['content-type'] ?? '').startsWith('application/json')) return send(res, 415, { error: 'Content-Type application/json requis' });
+      const origin = req.headers.origin;
+      if (origin && new URL(origin).host !== req.headers.host) return send(res, 403, { error: 'Origine refusée' });
+    }
+    for (const r of ROUTES) {
+      if (r.method !== req.method) continue;
+      const m = url.pathname.match(r.regex);
+      if (!m) continue;
+      const params = Object.fromEntries(r.names.map((n, i) => [n, id(m[i + 1])]));
+      const body = req.method === 'GET' ? {} : await readBody(req);
+      const out = await r.handler(kernel, params, body, req);
+      return send(res, out === undefined ? 204 : 200, out);
+    }
+    return send(res, 404, { error: 'Ressource introuvable' });
+  }
+
+  function handleStatic(req, res, url) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'Méthode non autorisée' });
+    const rel = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname.slice(1));
+    const file = path.resolve(PUBLIC_DIR, rel);
+    if (!file.startsWith(PUBLIC_DIR + path.sep) || !MIME[path.extname(file)] || !fs.existsSync(file)) return send(res, 404, { error: 'Introuvable' });
+    res.writeHead(200, { 'content-type': MIME[path.extname(file)], 'cache-control': 'no-cache', ...SECURITY_HEADERS });
+    return fs.createReadStream(file).pipe(res);
+  }
+
+  return http.createServer(async (req, res) => {
+    try {
+      // Protection contre le DNS rebinding : en écoute locale, seul un nom d'hôte local est accepté.
+      const hostName = (req.headers.host ?? '').replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
+      if (isLoopback(config.host) && !isLoopback(hostName)) return send(res, 403, { error: 'Hôte refusé' });
+      const url = new URL(req.url, 'http://omnia.local');
+      if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
+      return handleStatic(req, res, url);
+    } catch (e) {
+      if (e instanceof OmniaError) return send(res, e.status, { error: e.message });
+      if (e instanceof URIError || e instanceof TypeError && /Invalid URL/.test(e.message)) return send(res, 400, { error: 'Requête invalide' });
+      console.error('[omnia] erreur interne :', e);
+      return send(res, 500, { error: 'Erreur interne' });
+    }
+  });
+}
+
+export function start(overrides = {}) {
+  const config = loadConfig(overrides);
+  if (!isLoopback(config.host) && !config.token) {
+    throw new Error('Refus de démarrer : OMNIA_HOST expose le serveur au réseau sans OMNIA_TOKEN. Définissez un jeton d\'accès.');
+  }
+  const db = openDb(config.dbPath);
+  const kernel = createKernel({ db, ai: createAI(config.ai), config });
+  const server = createApp(config, kernel);
+  let busy = false;
+  const timer = setInterval(async () => {
+    if (busy) return; busy = true;
+    try { await kernel.tick(); } catch (e) { console.error('[omnia] ordonnanceur :', e.message); } finally { busy = false; }
+  }, config.schedulerSeconds * 1000);
+  timer.unref();
+  server.on('close', () => { clearInterval(timer); db.close(); });
+  return new Promise((resolve) => server.listen(config.port, config.host, () => resolve({ server, kernel, config, port: server.address().port })));
+}
+
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  start().then(({ config, kernel, port }) => {
+    console.log(`OMNIA Ω — http://${isLoopback(config.host) ? 'localhost' : config.host}:${port}`);
+    console.log(`IA : ${kernel.ai.generative ? `${kernel.ai.provider} (${kernel.ai.model})` : 'mode local, sans IA générative'} · données : ${config.dbPath}`);
+  }).catch((e) => { console.error(e.message); process.exit(1); });
+}

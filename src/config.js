@@ -1,0 +1,27 @@
+// Configuration lue depuis l'environnement. Les secrets (clés d'IA, jeton d'accès)
+// ne sont jamais stockés en base : ils restent dans l'environnement du processus.
+import path from 'node:path';
+
+const env = process.env;
+
+export function loadConfig(overrides = {}) {
+  const dataDir = overrides.dataDir ?? env.OMNIA_DATA_DIR ?? path.resolve('data');
+  return {
+    host: env.OMNIA_HOST ?? '127.0.0.1',
+    port: Number(env.OMNIA_PORT ?? 4747),
+    token: env.OMNIA_TOKEN ?? '',
+    dataDir,
+    dbPath: overrides.dbPath ?? env.OMNIA_DB ?? path.join(dataDir, 'omnia.db'),
+    exportDir: path.join(dataDir, 'exports'),
+    ai: {
+      provider: env.OMNIA_AI_PROVIDER ?? 'local',
+      model: env.OMNIA_AI_MODEL ?? '',
+      baseUrl: env.OMNIA_AI_BASE_URL ?? '',
+      apiKey: env.OMNIA_AI_API_KEY ?? '',
+    },
+    schedulerSeconds: Number(env.OMNIA_SCHEDULER_SECONDS ?? 60),
+    ...overrides,
+  };
+}
+
+export const isLoopback = (host) => ['127.0.0.1', 'localhost', '::1'].includes(host);
