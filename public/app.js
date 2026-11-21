@@ -15,7 +15,7 @@ const h = (tag, attrs = {}, ...children) => {
   return el;
 };
 const $app = document.getElementById('app');
-const state = { meta: null, workspaces: [], wsId: Number(localStorage.getItem('omnia.ws')) || null, view: 'tableau', chat: [], openDoc: null };
+const state = { meta: null, workspaces: [], wsId: Number(localStorage.getItem('omnia.ws')) || null, view: 'tableau', chat: [], openDoc: null, metric: 'solde_30j' };
 
 function toast(message, error = false) {
   const t = document.getElementById('toast');
@@ -91,6 +91,53 @@ function md(text) {
   return root;
 }
 
+// Courbe d'évolution d'un indicateur : une seule série, valeurs extrêmes et dernière valeur lisibles.
+const svg = (tag, attrs = {}, ...children) => {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  el.append(...children.filter((c) => c != null).map((c) => (c.nodeType ? c : document.createTextNode(String(c)))));
+  return el;
+};
+const METRICS = [
+  ['solde_30j', 'Solde sur 30 jours', true], ['revenus_30j', 'Revenus sur 30 jours', true], ['depenses_30j', 'Dépenses sur 30 jours', true],
+  ['taches_en_retard', 'Tâches en retard'], ['taches_terminees_30j', 'Tâches terminées sur 30 jours'], ['constats_ouverts', 'Constats ouverts'],
+];
+function progressChart(history, cur) {
+  const [key, label, isMoney] = METRICS.find((m) => m[0] === state.metric) ?? METRICS[0];
+  const pts = history.filter((r) => r.key === key);
+  const fmtv = (v) => (isMoney ? money(v, cur) : new Intl.NumberFormat('fr-FR').format(v));
+  const picker = h('select', { 'aria-label': 'Indicateur', onchange: (ev) => { state.metric = ev.target.value; render(); } }, METRICS.map(([k, l]) => h('option', { value: k, selected: k === key }, l)));
+  const head = h('div', { class: 'row between' }, h('h2', {}, 'Évolution'), picker);
+  if (pts.length < 2) return h('div', { class: 'card stack' }, head, empty(pts.length ? `Un seul relevé pour l'instant (${fmtv(pts[0].value)} le ${fdate(pts[0].day)}). La courbe apparaît dès la deuxième journée d'analyse.` : 'Aucun relevé : chaque analyse enregistre les indicateurs du jour.'));
+  const W = 640; const H = 180; const P = { l: 8, r: 8, t: 14, b: 22 };
+  const t0 = Date.parse(pts[0].day); const t1 = Date.parse(pts.at(-1).day);
+  const vals = pts.map((p) => p.value); let lo = Math.min(...vals, 0); let hi = Math.max(...vals, 0); if (hi === lo) hi = lo + 1;
+  const x = (d) => P.l + ((Date.parse(d) - t0) / (t1 - t0)) * (W - P.l - P.r);
+  const y = (v) => P.t + (1 - (v - lo) / (hi - lo)) * (H - P.t - P.b);
+  const path = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.day).toFixed(1)},${y(p.value).toFixed(1)}`).join(' ');
+  const last = pts.at(-1); const first = pts[0]; const delta = last.value - first.value;
+  return h('div', { class: 'card stack' }, head,
+    h('p', { class: 'small' }, h('strong', {}, fmtv(last.value)), h('span', { class: 'muted' }, ` au ${fdate(last.day)} · ${delta === 0 ? 'stable' : `${delta > 0 ? '+' : '−'}${fmtv(Math.abs(delta))}`} depuis le ${fdate(first.day)} · ${pts.length} relevés`)),
+    svg('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': `${label} : de ${fmtv(first.value)} le ${fdate(first.day)} à ${fmtv(last.value)} le ${fdate(last.day)}, minimum ${fmtv(Math.min(...vals))}, maximum ${fmtv(Math.max(...vals))}` },
+      svg('line', { x1: P.l, x2: W - P.r, y1: y(0), y2: y(0), class: 'axis' }),
+      svg('path', { d: path, class: 'line' }),
+      ...pts.map((p) => svg('circle', { cx: x(p.day), cy: y(p.value), r: pts.length > 40 ? 0 : 3, class: 'dot' }, svg('title', {}, `${fdate(p.day)} : ${fmtv(p.value)}`))),
+      svg('text', { x: P.l, y: H - 5, class: 'tick' }, fdate(first.day)), svg('text', { x: W - P.r, y: H - 5, class: 'tick', 'text-anchor': 'end' }, fdate(last.day))),
+    h('p', { class: 'muted small' }, `Minimum ${fmtv(Math.min(...vals))} · maximum ${fmtv(Math.max(...vals))}. Un relevé par jour d'analyse.`));
+}
+
+function download(name, content) {
+  const url = URL.createObjectURL(new Blob([content], { type: 'application/json' }));
+  const a = h('a', { href: url, download: name }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+const importBackup = act(async (ev) => {
+  const file = ev.target.files[0]; if (!file) return null;
+  let payload; try { payload = JSON.parse(await file.text()); } catch { throw new Error('Fichier illisible : ce n\'est pas du JSON'); }
+  const w = await api('POST', '/espaces/import', payload);
+  state.wsId = w.id; localStorage.setItem('omnia.ws', w.id); state.view = 'tableau'; state.chat = [];
+  return w;
+}, (w) => w && toast(`Espace restauré : ${w.imported.taches} tâche(s), ${w.imported.operations} opération(s), ${w.imported.documents} document(s)`));
+
 // ---------- Vues ----------
 const VIEWS = [
   ['tableau', 'Tableau de bord'], ['assistant', 'Assistant'], ['decisions', 'Décisions'], ['actions', 'Actions'],
@@ -156,6 +203,7 @@ const views = {
           d.pendingActions.length ? h('div', { class: 'card stack' }, h('h2', {}, `En attente de votre autorisation (${d.pendingActions.length})`), d.pendingActions.map(actionCard)) : null,
           h('h2', {}, 'Recommandations prioritaires'),
           d.recommendations.length ? d.recommendations.map((r) => recommendationCard(r, true)) : h('div', { class: 'card' }, empty('Aucune recommandation en attente.')))),
+      progressChart(d.history, cur),
       h('div', { class: 'grid cols-2' },
         h('div', { class: 'card stack' }, h('h2', {}, 'Dépenses par poste (30 j)'),
           d.expensesByCategory.length ? d.expensesByCategory.map((c) => { const fill = h('i'); fill.style.width = `${Math.round((c.total / maxCat) * 100)}%`; return h('div', {}, h('div', { class: 'row between small' }, h('span', {}, c.category), h('span', {}, money(c.total, cur))), h('div', { class: 'bar' }, fill)); }) : empty('Aucune dépense enregistrée sur la période.')),
@@ -261,7 +309,8 @@ const views = {
           h('h2', {}, 'Créer un document'), h('label', {}, 'Modèle', h('select', { name: 'template' }, state.meta.templates.map((t) => h('option', { value: t.id }, t.title)))),
           h('label', {}, 'Sujet ou précision', h('input', { name: 'brief', maxLength: 500, placeholder: 'Ex. : lancement de l\'offre de printemps' })), h('div', {}, h('button', { class: 'primary' }, 'Générer'))),
         h('form', { class: 'card stack', onsubmit: act((ev) => api('POST', ws('/documents'), formData(ev.target)), 'Note enregistrée') },
-          h('h2', {}, 'Ajouter une note'), h('label', {}, 'Titre', h('input', { name: 'title', required: true, maxLength: 200 })), h('label', {}, 'Contenu', h('textarea', { name: 'content' })), h('div', {}, h('button', {}, 'Enregistrer')))),
+          h('h2', {}, 'Ajouter une note'), h('label', {}, 'Titre', h('input', { name: 'title', required: true, maxLength: 200 })), h('label', {}, 'Contenu', h('textarea', { name: 'content' })), h('div', {}, h('button', {}, 'Enregistrer')),
+          h('label', {}, 'Ou importer des fichiers texte (.txt, .md, .csv)', h('input', { type: 'file', multiple: true, accept: '.txt,.md,.csv,text/plain,text/markdown,text/csv', onchange: act(async (ev) => { const files = [...ev.target.files]; for (const f of files) { if (f.size > 200000) throw new Error(`« ${f.name} » dépasse 200 Ko`); await api('POST', ws('/documents'), { title: f.name, kind: 'fichier', content: await f.text() }); } return files.length; }, (n) => n && toast(`${n} fichier(s) ajouté(s) à la mémoire`)) })))),
       open ? h('div', { class: 'card stack' }, h('div', { class: 'row between' }, h('h2', {}, open.title), h('button', { onclick: () => { state.openDoc = null; render(); } }, 'Fermer')), open.origin === 'omnia' && open.kind !== 'brouillon_email' ? md(open.content) : h('pre', { class: 'doc' }, open.content)) : null,
       h('div', { class: 'card stack' }, h('h2', {}, `Documents (${d.documents.length})`),
         d.documents.length ? d.documents.map((doc) => h('div', { class: 'item row between' }, h('div', {}, h('strong', {}, doc.title), h('p', { class: 'muted small' }, `${doc.kind} · ${doc.origin === 'omnia' ? 'produit par OMNIA' : 'ajouté par vous'} · ${fdate(doc.created_at)}`)),
@@ -322,6 +371,9 @@ const views = {
           h('span', {}, h('strong', {}, m.name), ' ', badge(m.tier, m.core ? 'socle' : m.tier), h('span', { class: 'muted small' }, ` ${m.description}`)))),
         h('p', { class: 'muted small' }, 'La mention « pro » indique le positionnement commercial prévu. Dans cette version, tous les modules sont utilisables sans licence.')),
       h('div', { class: 'card stack' }, h('h2', {}, 'Connecteurs'), state.meta.connectors.map((c) => h('div', { class: 'row between' }, h('span', {}, h('strong', {}, c.name), h('span', { class: 'muted small' }, ` — ${c.description}`)), badge(c.sensitivity)))),
+      h('div', { class: 'card stack' }, h('h2', {}, 'Sauvegarde'), h('p', { class: 'muted small' }, 'Le fichier contient le profil, les projets, tâches, opérations, documents et automatisations de cet espace. Il n\'est pas chiffré : conservez-le en lieu sûr.'),
+        h('div', { class: 'row' }, h('button', { onclick: act(async () => { const data = await api('GET', ws('/export')); download(`omnia-${w.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data, null, 2)); }, 'Sauvegarde téléchargée') }, 'Télécharger une sauvegarde'),
+          h('label', {}, 'Restaurer une sauvegarde dans un nouvel espace', h('input', { type: 'file', accept: '.json,application/json', onchange: importBackup })))),
       h('div', { class: 'card row between' }, h('div', {}, h('h2', {}, 'Supprimer cet espace'), h('p', { class: 'muted small' }, 'Supprime définitivement ses tâches, opérations, documents et décisions. Le journal d\'audit est conservé.')),
         h('button', { class: 'danger', onclick: act(async () => { if (!window.confirm(`Supprimer définitivement l'espace « ${w.name} » et toutes ses données ?`)) return; await api('DELETE', ws()); state.wsId = null; localStorage.removeItem('omnia.ws'); }) }, 'Supprimer l\'espace')));
   },
@@ -336,7 +388,8 @@ function onboarding(first) {
       h('label', {}, 'Nom de l\'activité', h('input', { name: 'name', required: true, maxLength: 120, placeholder: 'Ex. : Atelier Martin' })),
       h('label', {}, 'Que faites-vous, et que cherchez-vous à améliorer ?', h('textarea', { name: 'description', maxLength: 5000, placeholder: 'Ex. : Je tiens une menuiserie de 3 personnes. Je veux réduire mes retards de chantier et mieux suivre mes dépenses.' })),
       h('label', {}, 'Devise', h('input', { name: 'currency', value: 'EUR', maxLength: 3, size: 4, pattern: '[A-Za-z]{3}' })),
-      h('div', { class: 'row' }, h('button', { class: 'primary' }, 'Créer mon espace'), !first && h('button', { type: 'button', onclick: () => { state.view = 'tableau'; render(); } }, 'Annuler'))));
+      h('div', { class: 'row' }, h('button', { class: 'primary' }, 'Créer mon espace'), !first && h('button', { type: 'button', onclick: () => { state.view = 'tableau'; render(); } }, 'Annuler')),
+      h('label', {}, 'Ou restaurer une sauvegarde OMNIA (.json)', h('input', { type: 'file', accept: '.json,application/json', onchange: importBackup }))));
 }
 
 function go(view) { state.view = view; state.openDoc = null; render(); }

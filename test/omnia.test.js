@@ -173,3 +173,27 @@ test('API HTTP : routes, jeton, CSRF, hôte, fichiers statiques', async () => {
     assert.equal((await call('DELETE', `/api/espaces/${w.id}`, {})).status, 204);
   } finally { server.close(); }
 });
+
+test('sauvegarde : export puis restauration fidèle, automatisations remises en pause', async () => {
+  const { k } = setup();
+  const w = await k.createWorkspace({ name: 'Origine', description: 'Association de quartier' });
+  const p = k.createProject(w.id, { name: 'Fête', deadline: d(-20) });
+  k.createTask(w.id, { title: 'Réserver la salle', project_id: p.id, status: 'fait' });
+  k.createTask(w.id, { title: 'Sans projet', due_date: d(2) });
+  k.createTransaction(w.id, { date: d(1), amount: -42.5, label: 'Affiches' });
+  k.createDocument(w.id, { title: 'Statuts', content: 'Article 1' });
+  const auto = k.createAutomation(w.id, { name: 'envoi', every_minutes: 60, action_type: 'webhook.envoyer', params: { url: 'https://93.184.216.34/h' } });
+  k.updateAutomation(w.id, auto.id, { preauthorized: true });
+  const backup = JSON.parse(JSON.stringify(k.exportWorkspace(w.id)));
+  const r = k.importWorkspace(backup);
+  assert.notEqual(r.id, w.id); assert.equal(r.kind, 'association');
+  const data = k.data(r.id);
+  assert.equal(data.tasks.length, 2); assert.equal(data.transactions[0].amount, -42.5); assert.equal(data.documents[0].content, 'Article 1');
+  assert.equal(data.tasks.find((t) => t.title === 'Réserver la salle').project_id, data.projects[0].id);
+  const [restored] = k.listAutomations(r.id);
+  assert.equal(restored.enabled, 0); assert.equal(restored.preauthorized, 0);
+  assert.throws(() => k.importWorkspace({ format: 'autre' }), /sauvegarde OMNIA/);
+  const before = k.listWorkspaces().length;
+  assert.throws(() => k.importWorkspace({ ...backup, transactions: [{ date: 'x', amount: 1 }] }), /Date invalide/);
+  assert.equal(k.listWorkspaces().length, before, 'un import invalide ne laisse aucun espace partiel');
+});

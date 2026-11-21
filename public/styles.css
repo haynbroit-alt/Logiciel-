@@ -82,3 +82,8 @@ main > * + * { margin-top: 14px; }
 .item > .row.between { flex-wrap: nowrap; align-items: flex-start; }
 .item > .row.between > .row:first-child { flex: 1; min-width: 0; }
 .item > .row.between > button.link { flex: none; }
+.chart { width: 100%; height: auto; display: block; }
+.chart .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .dot { fill: var(--accent); stroke: var(--panel); stroke-width: 1.5; }
+.chart .axis { stroke: var(--line); stroke-width: 1; }
+.chart .tick { fill: var(--muted); font-size: 11px; }

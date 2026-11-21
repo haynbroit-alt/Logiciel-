@@ -6,7 +6,7 @@ Un seul logiciel, tous les secteurs : OMNIA transforme les besoins, problèmes e
 (entreprise, commerce, indépendant, association, collectivité, particulier) en constats chiffrés,
 en recommandations comparées et en actions concrètes — exécutées uniquement avec votre accord.
 
-> Version 0.1 — socle fonctionnel. La section [État réel](#état-réel-de-cette-version) dit précisément ce qui est fait et ce qui ne l'est pas.
+> Version 0.2 — socle fonctionnel. La section [État réel](#état-réel-de-cette-version) dit précisément ce qui est fait et ce qui ne l'est pas.
 
 ## Démarrer
 
@@ -15,7 +15,7 @@ Prérequis : Node.js ≥ 22.13. Aucune dépendance à installer, aucun compte, a
 ```bash
 npm run demo    # facultatif : crée un espace d'exemple (atelier de menuiserie)
 npm start       # http://localhost:4747
-npm test        # 12 tests
+npm test        # 13 tests
 ```
 
 Les données restent sur votre machine, dans `data/omnia.db` (SQLite).
@@ -84,7 +84,8 @@ Autres variables : `OMNIA_PORT` (4747), `OMNIA_DATA_DIR` (`./data`), `OMNIA_SCHE
 **Fait et vérifié** (tests automatisés + parcours complet dans un navigateur) : espaces multiples cloisonnés, gestion
 des tâches et projets, finances avec import CSV, mémoire documentaire, analyse, recommandations, exécution avec
 autorisations, automatisations périodiques, journal d'audit, génération de documents et assistant en mode local,
-tableau de bord responsive clair/sombre.
+courbe d'évolution des indicateurs, sauvegarde et restauration d'un espace (JSON), import de fichiers texte dans la
+mémoire, tableau de bord responsive clair/sombre. Les tests s'exécutent à chaque proposition de modification (GitHub Actions).
 
 **Écrit mais non vérifié en conditions réelles** : les fournisseurs d'IA externes (aucune clé disponible lors du
 développement). Le repli en cas d'échec est en place.
@@ -93,7 +94,8 @@ développement). Le repli en cas d'échec est en place.
 - comptes utilisateurs et rôles (un jeton unique protège l'instance) ;
 - gestion des licences : la mention « pro » des modules décrit le positionnement prévu, rien n'est restreint ;
 - connecteurs vers des services précis (banque, messagerie, CRM, agenda) — seul le webhook générique existe ;
-- lecture de documents PDF/bureautiques, API publique documentée, sauvegarde automatisée ;
+- lecture de documents PDF/bureautiques, API publique documentée, sauvegarde planifiée (la sauvegarde manuelle existe,
+  son fichier n'est pas chiffré) ;
 - chiffrement de la base au repos (à assurer par le système hôte).
 
 Limite connue : la vérification d'adresse des webhooks précède l'envoi ; un DNS malveillant qui changerait de
