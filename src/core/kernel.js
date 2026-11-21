@@ -16,6 +16,8 @@ import { createEvents, EVENTS } from './events.js';
 import { createConnectors } from '../connectors/index.js';
 import { createHub, CHANNEL_TYPES, TOKEN_PURPOSES } from '../connectors/hub.js';
 import { createStudio } from '../studio/studio.js';
+import { createCinema } from '../cinema/cinema.js';
+import { createRenderer } from '../cinema/render.js';
 
 export class OmniaError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
@@ -77,7 +79,7 @@ export function createKernel({ db, ai, config }) {
   function deleteWorkspace(id) {
     const w = workspace(id);
     db.tx(() => {
-      for (const t of ['projects', 'tasks', 'transactions', 'documents', 'insights', 'recommendations', 'actions', 'automations', 'rule_weights', 'metrics', 'memberships', 'channels', 'access_tokens', 'studio_projects', 'studio_evidence']) {
+      for (const t of ['projects', 'tasks', 'transactions', 'documents', 'insights', 'recommendations', 'actions', 'automations', 'rule_weights', 'metrics', 'memberships', 'channels', 'access_tokens', 'studio_projects', 'studio_evidence', 'cinema_projects', 'cinema_bible', 'cinema_shots', 'cinema_costs', 'cinema_exports']) {
         db.run(`DELETE FROM ${t} WHERE workspace_id = ?`, w.id);
       }
       db.run('DELETE FROM workspaces WHERE id = ?', w.id);
@@ -172,7 +174,7 @@ export function createKernel({ db, ai, config }) {
     documents: db.all('SELECT * FROM documents WHERE workspace_id = ? ORDER BY id DESC', wsId),
   });
   // Données soumises aux règles d'analyse : celles de l'espace, plus l'état du studio.
-  const analysisData = (wsId) => { const projects = studio.list(wsId); return { ...data(wsId), studio: { projects, autofinancement: studio.selfFunding(projects) } }; };
+  const analysisData = (wsId) => { const projects = studio.list(wsId); return { ...data(wsId), studio: { projects, autofinancement: studio.selfFunding(projects) }, cinema: { projects: cinema.list(wsId) } }; };
   const insightRow = (i) => ({ ...i, evidence: parseJson(i.evidence, {}), ruleLabel: registry.rule(i.rule)?.label ?? i.rule });
   const recRow = (r) => ({ ...r, options: parseJson(r.options, []) });
   const openInsights = (wsId) => db.all("SELECT * FROM insights WHERE workspace_id = ? AND status = 'ouvert' ORDER BY severity DESC, id DESC", wsId).map(insightRow);
@@ -354,6 +356,8 @@ export function createKernel({ db, ai, config }) {
   const hub = createHub({ db, audit, config, fail: (m, s) => { throw new OmniaError(m, s); }, services: { createTask, createTransaction, createDocument } });
 
   const studio = createStudio({ db, audit, fail: (m, s) => { throw new OmniaError(m, s); }, services: { createTransaction } });
+  const cinema = createCinema({ db, audit, ai, fail: (m, s) => { throw new OmniaError(m, s); } });
+  const renderer = createRenderer({ db, audit, config, cinema, fail: (m, s) => { throw new OmniaError(m, s); } });
   // Document du studio : le brief ne contient que ce qui a été saisi sur le projet.
   async function generateForStudio(wsId, projectId, template) { const b = studio.brief(wsId, projectId); return generate(wsId, template, `${b.name}\n${b.text}`, 1500); }
 
@@ -525,7 +529,7 @@ export function createKernel({ db, ai, config }) {
   }
 
   return {
-    audit, auth, execution, connectors, hub, studio, generateForStudio, ai, registry, events, processEvents,
+    audit, auth, execution, connectors, hub, studio, generateForStudio, cinema, renderer, ai, registry, events, processEvents,
     // Enregistre un module auprès du noyau (modules externes chargés au démarrage, ou par programme).
     registerModule(mod, source = 'externe') {
       try { const m = registry.register(mod, { source }); audit.record({ actor: 'omnia', event: 'module.enregistre', entity: 'module', detail: { id: m.id, source, regles: m.rules.length, actions: m.actions.length } }); return m; }

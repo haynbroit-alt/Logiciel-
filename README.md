@@ -6,7 +6,7 @@ Un seul logiciel, tous les secteurs : OMNIA transforme les besoins, problèmes e
 (entreprise, commerce, indépendant, association, collectivité, particulier) en constats chiffrés,
 en recommandations comparées et en actions concrètes — exécutées uniquement avec votre accord.
 
-> Version 0.7 — socle fonctionnel. La section [État réel](#état-réel-de-cette-version) dit précisément ce qui est fait et ce qui ne l'est pas.
+> Version 0.8 — socle fonctionnel. La section [État réel](#état-réel-de-cette-version) dit précisément ce qui est fait et ce qui ne l'est pas.
 
 ## Démarrer
 
@@ -15,7 +15,7 @@ Prérequis : Node.js ≥ 22.13. Aucune dépendance à installer, aucun compte, a
 ```bash
 npm run demo    # facultatif : crée un espace d'exemple (atelier de menuiserie)
 npm start       # http://localhost:4747
-npm test        # 32 tests
+npm test        # 35 tests
 ```
 
 Les données restent sur votre machine, dans `data/omnia.db` (SQLite).
@@ -82,6 +82,49 @@ Il ne publie, ne vend et n'encaisse rien lui-même. Il produit des documents de 
 script vidéo, fiche de jeu, offre et prix, plan de campagne) à partir de ce que vous avez saisi, en marquant
 `INCONNU` ce qui manque. La recherche et la production restent à faire par vous ou par des outils à connecter ;
 leurs résultats se consignent ici avec leur source. La sauvegarde d'un espace n'inclut pas encore les projets du studio.
+
+## Studio de cinéma
+
+Un module pour mener un film de l'idée à l'export, proposé d'office aux espaces du secteur créatif.
+
+**Ce qu'il faut savoir d'abord.** OMNIA ne contient aucun générateur d'images, de voix ou de musique. La qualité de
+l'image d'un film est celle des clips que vous lui donnez ou du générateur que vous lui branchez. OMNIA est le
+studio autour : il écrit, tient la cohérence, monte, étalonne, sous-titre et exporte.
+
+| Étape | Ce qu'OMNIA fait | Validation |
+|---|---|---|
+| 1. Scénario et découpage | Avec une IA : écrit scènes, dialogues et cadres à partir de l'idée. Sans IA : prépare une trame en trois actes que vous remplissez plan par plan | **Script** |
+| 2. Direction artistique | Bible des personnages, décors, costumes et styles ; une fois verrouillée, sa description est recopiée mot pour mot dans la consigne de chaque plan. Storyboard en schémas de cadrage | **Storyboard** |
+| 3. Tournage | Pour chaque plan : votre clip s'il est fourni, sinon le générateur branché, sinon un carton d'animatique. Chaque plan est préparé en 16:9 et en 9:16, sans bandes noires ni déformation | **Plans** |
+| 4. Montage | Assemblage, coupe franche ou fondu, étalonnage (5 réglages), sous-titres incrustés et fichier `.srt`, volume normalisé, exports 1920×1080 et 1080×1920 | **Montage final** |
+
+- **Aucun rendu lourd sans approbation** : le tournage exige le storyboard validé, le prémontage exige les plans
+  validés, l'export final exige le montage validé. Avec des comptes, seul un propriétaire valide une étape.
+- **Une retouche annule ce qui en dépendait** : modifier un dialogue rouvre le script, modifier un cadre ou
+  déverrouiller la bible rouvre le storyboard, changer l'étalonnage rouvre le montage et périme les exports.
+- **Coût par minute produite** : chaque appel à une brique payante est enregistré.
+
+### Brancher un générateur
+
+Chaque brique est une commande décrite dans `data/cinema/briques.json` ; OMNIA remplace les éléments entre accolades.
+
+```json
+{
+  "video":   { "nom": "Mon générateur", "commande": ["python", "generer.py", "--consigne", "{prompt}", "--duree", "{duree}", "--sortie", "{sortie}"], "cout_par_seconde": 0.05 },
+  "voix":    { "commande": ["piper", "--texte", "{texte}", "--sortie", "{sortie}"] },
+  "musique": { "commande": ["python", "musique.py", "--ambiance", "{prompt}", "--duree", "{duree}", "--sortie", "{sortie}"] }
+}
+```
+
+Variables disponibles : `{prompt}`, `{duree}`, `{largeur}`, `{hauteur}`, `{texte}`, `{voix}`, `{sortie}`. Les textes
+sont passés comme arguments séparés, jamais interprétés par un shell. Sans générateur, déposez vos clips dans le
+dossier d'apports du film (affiché à l'écran) et indiquez leur nom sur chaque plan.
+
+**Limites.** Le montage dépend de `ffmpeg` (logiciel libre, à installer). Il n'y a ni synchronisation labiale, ni
+bruitages, ni génération d'images pour le storyboard ; les transitions se limitent à la coupe et au fondu au noir.
+La cohérence visuelle est assurée par les consignes : elle dépend de la capacité du générateur à les respecter.
+Tournage et export s'exécutent pendant la requête et peuvent durer plusieurs minutes. Aucun générateur réel n'a
+été essayé ; la chaîne est testée avec une mire d'essai et avec des clips fournis.
 
 ## Architecture : un noyau central
 
@@ -194,7 +237,7 @@ Autres variables : `OMNIA_PORT` (4747), `OMNIA_DATA_DIR` (`./data`), `OMNIA_SCHE
 ## État réel de cette version
 
 **Fait et vérifié** (tests automatisés + parcours complet dans un navigateur) : espaces multiples cloisonnés, comptes
-utilisateurs avec rôles par espace, studio économique (étapes, validation, preuves, autofinancement), compréhension des demandes en langage courant et classement des priorités,
+utilisateurs avec rôles par espace, studio de cinéma (quatre validations, bible de cohérence, montage et exports dans les deux formats), studio économique (étapes, validation, preuves, autofinancement), compréhension des demandes en langage courant et classement des priorités,
 noyau à modules (registre, événements, modules externes, clé d'API), gestion
 des tâches et projets, finances avec import CSV, mémoire documentaire, analyse, recommandations, exécution avec
 autorisations, automatisations périodiques, journal d'audit, génération de documents et assistant en mode local,

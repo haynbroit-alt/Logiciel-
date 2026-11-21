@@ -15,7 +15,7 @@ const h = (tag, attrs = {}, ...children) => {
   return el;
 };
 const $app = document.getElementById('app');
-const state = { meta: null, workspaces: [], wsId: Number(localStorage.getItem('omnia.ws')) || null, view: 'tableau', chat: [], openDoc: null, metric: 'solde_30j', studioProject: null };
+const state = { meta: null, workspaces: [], wsId: Number(localStorage.getItem('omnia.ws')) || null, view: 'tableau', chat: [], openDoc: null, metric: 'solde_30j', studioProject: null, film: null };
 
 function toast(message, error = false) {
   const t = document.getElementById('toast');
@@ -143,7 +143,7 @@ const importBackup = act(async (ev) => {
 // ---------- Vues ----------
 const VIEWS = [
   ['tableau', 'Tableau de bord'], ['assistant', 'Assistant'], ['decisions', 'Décisions'], ['actions', 'Actions'],
-  ['studio', 'Studio', 'studio'], ['gestion', 'Gestion', 'gestion'], ['finances', 'Finances', 'finances'], ['memoire', 'Mémoire', 'memoire'],
+  ['studio', 'Studio', 'studio'], ['cinema', 'Cinéma', 'cinema'], ['gestion', 'Gestion', 'gestion'], ['finances', 'Finances', 'finances'], ['memoire', 'Mémoire', 'memoire'],
   ['automatisations', 'Automatisations', 'automatisations'], ['connexions', 'Connexions', 'connecteurs'], ['journal', 'Journal'], ['noyau', 'Noyau'], ['reglages', 'Réglages'],
 ];
 const page = (title, subtitle, actions, ...content) => [
@@ -488,6 +488,99 @@ const views = {
             h('td', { class: 'num' }, p.score ?? `${p.scoredCriteria}/8 notés`), h('td', {}, proof(p)), h('td', { class: `num ${p.metrics.benefice_net < 0 ? 'neg' : ''}` }, money(p.metrics.benefice_net, cur)),
             h('td', { class: 'right' }, h('button', { onclick: () => { state.studioProject = p.id; render().then(() => window.scrollTo(0, 0)); } }, 'Ouvrir'))))))) : empty('Aucune opportunité. Créez-en une : elle commence à l\'étape EXPLORER et n\'avance que sur preuves.')),
       h('p', { class: 'muted small' }, 'Le studio structure, contrôle et mesure. Il n\'observe pas les tendances et ne produit ni image, ni vidéo, ni prototype de jeu : ces résultats se consignent ici avec leur source. Il ne publie, ne vend et ne paie rien lui-même.'));
+  },
+
+  async cinema() {
+    const o = await api('GET', ws('/cinema')); const R = o.reference; const P = o.production; const cur = state.workspace.currency;
+    const f = state.film && o.projects.some((x) => x.id === state.film) ? await api('GET', ws(`/cinema/projets/${state.film}`)) : null;
+    const base = f ? ws(`/cinema/projets/${f.id}`) : ''; const select = (name, list, value) => h('select', { name, 'aria-label': name }, list.map((x) => h('option', { value: x, selected: x === value }, x)));
+    const brick = (label, b) => h('div', { class: 'row between small' }, h('span', {}, h('strong', {}, label), ` — ${b.nom}`), badge(b.type === 'commande' || b.type === 'ffmpeg' ? 'reussie' : 'en_attente', b.type === 'commande' ? `branchée · ${b.cout_par_seconde}/s` : b.type === 'ffmpeg' ? 'intégrée' : b.type === 'carton' ? 'maquette' : 'non branchée'));
+    const mega = (n) => (n < 1e6 ? `${Math.max(1, Math.round(n / 1e3))} Ko` : `${(n / 1e6).toFixed(1)} Mo`);
+
+    const film = () => {
+      const gate = (key) => f.gates.find((g) => g.key === key); const done = (key) => Boolean(gate(key).approved);
+      const gateBox = (key, intro, extra) => { const g = gate(key);
+        return h('div', { class: `notice ${g.approved ? 'info' : ''} stack` },
+          h('div', { class: 'row between' }, h('strong', {}, g.approved ? `✓ ${g.label} validé le ${fdatetime(g.approved.at)} par ${g.approved.by}` : `Validation : ${g.label}`),
+            g.approved ? h('button', { class: 'link', onclick: act(async () => { if (window.confirm(`Rouvrir « ${g.label} » ? Les validations suivantes seront annulées.`)) await api('POST', `${base}/rouvrir`, { etape: key }); }) }, 'Rouvrir')
+              : h('button', { class: 'primary', disabled: g.blockers.length > 0, onclick: act(() => api('POST', `${base}/valider`, { etape: key }), `${g.label} validé`) }, `Valider : ${g.label}`)),
+          g.approved ? null : g.blockers.length ? g.blockers.map((b) => h('span', { class: 'small' }, `• ${b}`)) : h('span', { class: 'small' }, intro), extra); };
+      const scenes = [...new Set(f.shots.map((x) => x.scene))];
+      return h('div', { class: 'stack' },
+        h('div', { class: 'card stack' },
+          h('div', { class: 'row between' }, h('h2', {}, f.title), h('div', { class: 'row' }, h('span', { class: 'muted small' }, `${f.shots.length} plan(s) · ${f.seconds} s · ${f.orientation === 'portrait' ? 'tourné en vertical' : 'tourné en large'}`), h('button', { class: 'link', onclick: () => { state.film = null; render(); } }, 'Fermer'))),
+          h('ol', { class: 'steps' }, f.gates.map((g) => h('li', { class: g.approved ? 'past' : g.key === f.currentGate ? 'now' : '' }, g.label))),
+          h('p', { class: 'muted small' }, f.idea || 'Aucune idée renseignée.')),
+
+        h('div', { class: 'card stack' }, h('h2', {}, '1 · Scénario et découpage'),
+          h('div', { class: 'row' }, h('button', { onclick: act(async () => { if (!f.shots.length || window.confirm('Réécrire le découpage ? Les plans actuels seront remplacés.')) return api('POST', `${base}/script`); return null; }, (r) => r && toast(r.scriptSource === 'local' ? `Trame en trois actes créée : ${r.shots.length} plans à écrire${r.fallbackReason ? ` (IA indisponible : ${r.fallbackReason})` : ''}` : `Découpage écrit par ${r.scriptSource} : ${r.shots.length} plans`)) }, state.meta.ai.generative ? 'Écrire le découpage à partir de l\'idée' : 'Créer une trame à remplir'),
+            h('span', { class: 'muted small' }, state.meta.ai.generative ? 'Le modèle écrit scènes, dialogues et cadres ; vous corrigez.' : 'Sans IA générative, OMNIA ne rédige pas le scénario : il prépare la structure et vous écrivez chaque plan.')),
+          scenes.map((sc) => { const shots = f.shots.filter((x) => x.scene === sc);
+            return h('div', { class: 'stack' }, h('h3', {}, `Scène ${sc}${shots[0].scene_title ? ` — ${shots[0].scene_title}` : ''}`),
+              shots.map((x) => h('form', { class: 'item stack', onsubmit: act((ev) => { const d = formData(ev.target); return api('PATCH', `${base}/plans/${x.id}`, { ...d, refs: [...ev.target.querySelectorAll('input[name=ref]:checked')].map((c) => Number(c.value)) }); }, 'Plan enregistré') },
+                h('div', { class: 'row' }, h('strong', {}, `Plan ${x.number}`), select('size', R.sizes, x.size), select('angle', R.angles, x.angle), select('movement', R.moves, x.movement),
+                  h('label', {}, 'Durée (s)', h('input', { name: 'duration', type: 'number', min: 1, max: 60, step: 0.5, value: x.duration, size: 4 })), x.clip ? badge('reussie', `tourné · ${x.clip_origin}`) : badge('en_attente', 'à tourner')),
+                h('label', {}, 'Ce que l\'on voit', h('textarea', { name: 'description', value: x.description })),
+                h('div', { class: 'row' }, h('label', {}, 'Qui parle', h('input', { name: 'speaker', value: x.speaker, size: 14 })), h('label', { class: 'grow' }, 'Réplique', h('input', { name: 'dialogue', value: x.dialogue, maxLength: 400 })), h('label', {}, 'Lumière', h('input', { name: 'lighting', value: x.lighting, size: 18 }))),
+                f.bible.length ? h('div', { class: 'row small' }, 'Présents dans le plan :', f.bible.filter((b) => b.kind !== 'style').map((b) => h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'ref', value: b.id, checked: x.refs.includes(b.id) }), b.name))) : null,
+                h('label', {}, 'Clip déjà réalisé (nom d\'un fichier déposé dans le dossier d\'apports)', h('input', { name: 'apport', value: x.apport ?? '', placeholder: 'ex. : plan-03.mp4' })),
+                h('div', { class: 'row' }, h('button', {}, 'Enregistrer'), h('button', { type: 'button', class: 'link danger', onclick: act(() => api('DELETE', `${base}/plans/${x.id}`), 'Plan supprimé') }, 'Supprimer')))) ); }),
+          h('form', { class: 'inline', onsubmit: act((ev) => api('POST', `${base}/plans`, formData(ev.target)), 'Plan ajouté') },
+            h('label', { class: 'grow' }, 'Nouveau plan : ce que l\'on voit', h('input', { name: 'description', required: true, maxLength: 600 })), h('label', {}, 'Scène', h('input', { name: 'scene', type: 'number', min: 1, value: scenes.at(-1) ?? 1, size: 3 })), h('button', {}, 'Ajouter le plan')),
+          gateBox('script', 'Le script est complet : validez-le pour ouvrir le storyboard.')),
+
+        h('div', { class: 'card stack' }, h('h2', {}, '2 · Direction artistique et storyboard'),
+          h('p', { class: 'muted small' }, 'La bible fixe personnages, décors, costumes et style. Une fois verrouillée, sa description est recopiée mot pour mot dans la consigne de chaque plan : c\'est ce qui tient la cohérence d\'une scène à l\'autre.'),
+          f.bible.map((b) => h('div', { class: 'item row between' }, h('div', {}, h('strong', {}, b.name), ' ', badge('gratuit', R.bibleKinds[b.kind]), h('p', { class: 'small' }, b.descriptor)),
+            h('div', { class: 'row' }, h('button', { onclick: act(() => api('PATCH', `${base}/bible/${b.id}`, { locked: !b.locked }), b.locked ? 'Déverrouillé' : 'Verrouillé') }, b.locked ? '🔒 Verrouillé' : 'Verrouiller'),
+              b.locked ? null : h('button', { class: 'link danger', onclick: act(() => api('DELETE', `${base}/bible/${b.id}`)) }, 'Supprimer')))),
+          h('form', { class: 'inline', onsubmit: act((ev) => api('POST', `${base}/bible`, formData(ev.target)), 'Élément ajouté à la bible') },
+            h('label', {}, 'Type', h('select', { name: 'kind' }, Object.entries(R.bibleKinds).map(([key, l]) => h('option', { value: key }, l)))), h('label', {}, 'Nom', h('input', { name: 'name', required: true, maxLength: 80 })),
+            h('label', { class: 'grow' }, 'Description visuelle précise', h('input', { name: 'descriptor', required: true, maxLength: 600, placeholder: 'âge, traits, tenue, couleurs, matières…' })), h('button', {}, 'Ajouter')),
+          done('script') ? h('div', { class: 'frames' }, f.shots.map((x) => h('figure', {}, h('img', { src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(x.frame)}`, alt: `Plan ${x.number} : ${x.size}, ${x.movement}. ${x.description}`, loading: 'lazy' }),
+            h('details', {}, h('summary', { class: 'small' }, 'Consigne pour le générateur'), h('pre', { class: 'doc small' }, x.prompt), h('button', { class: 'link', onclick: () => navigator.clipboard?.writeText(x.prompt).then(() => toast('Consigne copiée'), () => toast('Copie impossible', true)) }, 'Copier'))))) : empty('Le storyboard s\'affiche une fois le script validé.'),
+          gateBox('storyboard', 'Cadres et bible sont prêts : validez pour autoriser le tournage.', h('span', { class: 'muted small' }, 'Ces vignettes sont des schémas de cadrage, pas des images du film.'))),
+
+        h('div', { class: 'card stack' }, h('h2', {}, '3 · Tournage'),
+          brick('Image', P.briques.video), brick('Voix', P.briques.voix), brick('Musique', P.briques.musique),
+          h('p', { class: 'muted small' }, `Pour utiliser vos propres clips (produits par le générateur de votre choix), déposez-les dans `, h('code', {}, f.dossier_apports), ' et indiquez leur nom sur chaque plan. Les plans sans clip ni générateur branché sont remplacés par un carton d\'animatique.'),
+          h('div', { class: 'row' }, h('button', { class: 'primary', disabled: !done('storyboard') || f.shots.every((x) => x.clip), onclick: act(() => api('POST', `${base}/tourner`), (r) => { const ko = r.rapport.filter((x) => x.erreur); toast(ko.length ? `${ko.length} plan(s) en échec : ${ko[0].erreur}` : `${r.rapport.filter((x) => x.secondes).length} plan(s) tourné(s)`, ko.length > 0); }) }, `Tourner les plans (${f.shots.filter((x) => !x.clip).length} à faire)`),
+            h('span', { class: 'muted small' }, done('storyboard') ? 'Le tournage peut prendre plusieurs minutes.' : 'Disponible après validation du storyboard.')),
+          gateBox('plans', 'Tous les plans sont tournés : validez-les pour assembler le prémontage.')),
+
+        h('div', { class: 'card stack' }, h('h2', {}, '4 · Montage et post-production'),
+          h('form', { class: 'inline', onsubmit: act((ev) => { const d = formData(ev.target); return api('PATCH', base, { grade: d.grade, transition: d.transition, subtitles: d.subtitles === 'on' }); }, 'Réglages enregistrés') },
+            h('label', {}, 'Étalonnage', h('select', { name: 'grade' }, Object.entries(R.grades).map(([key, l]) => h('option', { value: key, selected: key === f.grade }, l)))),
+            h('label', {}, 'Transitions', h('select', { name: 'transition' }, Object.entries(R.transitions).map(([key, l]) => h('option', { value: key, selected: key === f.transition }, l)))),
+            h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'subtitles', checked: Boolean(f.subtitles) }), 'Incruster les sous-titres'), h('button', {}, 'Enregistrer')),
+          h('div', { class: 'row' }, h('button', { disabled: !done('plans'), onclick: act(() => api('POST', `${base}/assembler`, { type: 'premontage' }), 'Prémontage assemblé') }, 'Assembler le prémontage'),
+            h('button', { class: 'primary', disabled: !done('montage'), onclick: act(() => api('POST', `${base}/assembler`, { type: 'final' }), (r) => toast(`Export final : ${r.produit.map((x) => x.taille).join(' et ')}`)) }, 'Exporter le film (16:9 et 9:16)'),
+            h('span', { class: 'muted small' }, 'L\'export final en pleine définition peut prendre plusieurs minutes.')),
+          f.exports.map((e) => h('div', { class: 'item stack' }, h('div', { class: 'row between' }, h('strong', {}, e.kind === 'final' ? `Film — ${o.formats[e.format]?.label ?? e.format}` : 'Prémontage (aperçu basse définition)'),
+            h('div', { class: 'row' }, e.stale ? badge('en_attente', 'périmé') : null, h('span', { class: 'muted small' }, `${e.width}×${e.height} · ${e.seconds} s · ${mega(e.bytes)}`), h('a', { class: 'btn', href: `/api${base}/exports/${e.id}/fichier`, download: '' }, 'Télécharger'))),
+            h('video', { controls: true, preload: 'metadata', src: `/api${base}/exports/${e.id}/fichier`, class: e.height > e.width ? 'tall' : '' }))),
+          gateBox('montage', 'Visionnez le prémontage : votre validation autorise l\'export final.')),
+
+        h('div', { class: 'card stack' }, h('h2', {}, 'Coûts de production'),
+          h('p', {}, h('strong', {}, f.costPerMinute === null ? '—' : `${money(f.costPerMinute, cur)} par minute produite`), h('span', { class: 'muted' }, ` · total ${money(f.costTotal, cur)} pour ${f.seconds} s`)),
+          f.costs.length ? h('table', {}, h('tbody', {}, f.costs.slice(0, 30).map((c) => h('tr', {}, h('td', {}, c.label), h('td', { class: 'num' }, `${c.seconds} s`), h('td', { class: 'num' }, money(c.cost, cur)))))) : h('p', { class: 'muted small' }, 'Aucun coût : les briques utilisées jusqu\'ici sont gratuites ou vos clips ont été fournis.')));
+    };
+
+    return page('Studio de cinéma', 'De l\'idée au film, en quatre validations : script, storyboard, plans, montage final.', null,
+      P.outils.ffmpeg ? null : h('div', { class: 'notice' }, 'ffmpeg est introuvable sur cette machine : le tournage et le montage sont indisponibles tant qu\'il n\'est pas installé (logiciel libre).'),
+      P.erreur ? h('div', { class: 'notice' }, `Configuration des briques ignorée : ${P.erreur}`) : null,
+      f ? film() : null,
+      h('div', { class: 'card stack' }, h('h2', {}, `Films (${o.projects.length})`),
+        h('form', { class: 'stack', onsubmit: act((ev) => api('POST', ws('/cinema/projets'), formData(ev.target)), (p) => { state.film = p.id; toast('Film créé'); }) },
+          h('div', { class: 'row' }, h('label', { class: 'grow' }, 'Titre', h('input', { name: 'title', required: true, maxLength: 160 })), h('label', {}, 'Durée visée (s)', h('input', { name: 'target_seconds', type: 'number', min: 10, max: 1800, value: 60, size: 5 })),
+            h('label', {}, 'Tourné en', h('select', { name: 'orientation' }, h('option', { value: 'paysage' }, 'Large (16:9)'), h('option', { value: 'portrait' }, 'Vertical (9:16)')))),
+          h('label', {}, 'L\'idée', h('textarea', { name: 'idea', maxLength: 3000, placeholder: 'Ex. : un petit robot aspirateur découvre une miette de pain et hésite à l\'aspirer.' })),
+          h('label', {}, 'Style visuel', h('input', { name: 'style', maxLength: 500, placeholder: 'Ex. : animation 3D, nuit, lumière bleutée, faible profondeur de champ' })), h('div', {}, h('button', { class: 'primary' }, 'Créer le film'))),
+        o.projects.map((p) => h('div', { class: 'item row between' }, h('div', {}, h('strong', {}, p.title), h('p', { class: 'muted small' }, `${p.shots.length} plan(s) · ${p.seconds} s · étape : ${p.currentGate ? p.gates.find((g) => g.key === p.currentGate).label : 'terminé'}`)),
+          h('div', { class: 'row' }, h('button', { onclick: () => { state.film = p.id; render().then(() => window.scrollTo(0, 0)); } }, 'Ouvrir'), h('button', { class: 'link danger', onclick: act(async () => { if (window.confirm(`Supprimer le film « ${p.title} » ?`)) await api('DELETE', ws(`/cinema/projets/${p.id}`)); }) }, 'Supprimer'))))),
+      h('div', { class: 'card stack' }, h('h2', {}, 'Briques de production'), brick('Image', P.briques.video), brick('Voix', P.briques.voix), brick('Musique', P.briques.musique), brick('Montage', P.briques.montage),
+        h('p', { class: 'muted small' }, 'OMNIA ne contient aucun générateur d\'images, de voix ou de musique. Il écrit, tient la cohérence, monte, étalonne, sous-titre et exporte ; la qualité de l\'image est celle des clips que vous fournissez ou du générateur que vous branchez. Pour brancher un générateur, décrivez sa commande dans ',
+          h('code', {}, P.fichier_briques), '.')));
   },
 
   async noyau() {

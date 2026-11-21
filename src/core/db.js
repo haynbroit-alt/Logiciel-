@@ -98,6 +98,30 @@ CREATE TABLE IF NOT EXISTS studio_evidence (
   topic TEXT NOT NULL DEFAULT '', statement TEXT NOT NULL, status TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'autre',
   source TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS cinema_projects (
+  id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL, title TEXT NOT NULL, idea TEXT NOT NULL DEFAULT '', style TEXT NOT NULL DEFAULT '',
+  orientation TEXT NOT NULL DEFAULT 'paysage', target_seconds INTEGER NOT NULL DEFAULT 60, approvals TEXT NOT NULL DEFAULT '{}',
+  grade TEXT NOT NULL DEFAULT 'neutre', transition TEXT NOT NULL DEFAULT 'coupe', subtitles INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS cinema_bible (
+  id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL, project_id INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL,
+  descriptor TEXT NOT NULL, locked INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS cinema_shots (
+  id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL, project_id INTEGER NOT NULL, scene INTEGER NOT NULL DEFAULT 1, scene_title TEXT NOT NULL DEFAULT '',
+  position INTEGER NOT NULL DEFAULT 1, description TEXT NOT NULL DEFAULT '', dialogue TEXT NOT NULL DEFAULT '', speaker TEXT NOT NULL DEFAULT '',
+  size TEXT NOT NULL, angle TEXT NOT NULL, movement TEXT NOT NULL, lighting TEXT NOT NULL DEFAULT '', duration REAL NOT NULL DEFAULT 4,
+  refs TEXT NOT NULL DEFAULT '[]', apport TEXT, clip TEXT, clip_seconds REAL, clip_origin TEXT, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS cinema_costs (
+  id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL, project_id INTEGER NOT NULL, brick TEXT NOT NULL, label TEXT NOT NULL,
+  seconds REAL NOT NULL DEFAULT 0, cost REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS cinema_exports (
+  id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL, project_id INTEGER NOT NULL, kind TEXT NOT NULL, format TEXT NOT NULL, file TEXT NOT NULL,
+  seconds REAL NOT NULL DEFAULT 0, width INTEGER, height INTEGER, bytes INTEGER, stale INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_tasks_ws ON tasks(workspace_id, status);
 CREATE INDEX IF NOT EXISTS idx_tx_ws ON transactions(workspace_id, date);
 CREATE INDEX IF NOT EXISTS idx_actions_ws ON actions(workspace_id, status);
