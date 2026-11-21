@@ -30,6 +30,8 @@ async function api(method, path, body) {
   if (method !== 'GET') headers['content-type'] = 'application/json';
   const res = await fetch(`/api${path}`, { method, headers, body: method === 'GET' ? undefined : JSON.stringify(body ?? {}) });
   if (res.status === 401) {
+    const info = await res.json().catch(() => ({}));
+    if (info.comptes || path === '/session') { if (path !== '/session') state.user = null; throw new Error(info.error || 'Connexion requise'); }
     const given = window.prompt('Jeton d\'accès OMNIA :');
     if (!given) throw new Error('Jeton d\'accès requis');
     sessionStorage.setItem('omnia.token', given.trim());
@@ -47,7 +49,7 @@ const act = (fn, done) => async (ev) => {
   ev?.preventDefault?.();
   const btn = ev?.submitter ?? (ev?.currentTarget?.tagName === 'BUTTON' ? ev.currentTarget : null);
   if (btn) btn.disabled = true;
-  try { const out = await fn(ev); if (typeof done === 'string') toast(done); else if (done) done(out); await render(); } catch (e) { toast(e.message, true); } finally { if (btn) btn.disabled = false; }
+  try { const out = await fn(ev); if (typeof done === 'string') toast(done); else if (done) done(out); await render(); } catch (e) { toast(e.message, true); if (state.accounts && !state.user && !document.getElementById('connexion')) await render(); } finally { if (btn) btn.disabled = false; }
 };
 const formData = (form) => Object.fromEntries(new FormData(form).entries());
 
@@ -371,6 +373,7 @@ const views = {
           h('span', {}, h('strong', {}, m.name), ' ', badge(m.tier, m.core ? 'socle' : m.tier), h('span', { class: 'muted small' }, ` ${m.description}`)))),
         h('p', { class: 'muted small' }, 'La mention « pro » indique le positionnement commercial prévu. Dans cette version, tous les modules sont utilisables sans licence.')),
       h('div', { class: 'card stack' }, h('h2', {}, 'Connecteurs'), state.meta.connectors.map((c) => h('div', { class: 'row between' }, h('span', {}, h('strong', {}, c.name), h('span', { class: 'muted small' }, ` — ${c.description}`)), badge(c.sensitivity)))),
+      await accountsCards(w),
       h('div', { class: 'card stack' }, h('h2', {}, 'Sauvegarde'), h('p', { class: 'muted small' }, 'Le fichier contient le profil, les projets, tâches, opérations, documents et automatisations de cet espace. Il n\'est pas chiffré : conservez-le en lieu sûr.'),
         h('div', { class: 'row' }, h('button', { onclick: act(async () => { const data = await api('GET', ws('/export')); download(`omnia-${w.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data, null, 2)); }, 'Sauvegarde téléchargée') }, 'Télécharger une sauvegarde'),
           h('label', {}, 'Restaurer une sauvegarde dans un nouvel espace', h('input', { type: 'file', accept: '.json,application/json', onchange: importBackup })))),
@@ -392,10 +395,61 @@ function onboarding(first) {
       h('label', {}, 'Ou restaurer une sauvegarde OMNIA (.json)', h('input', { type: 'file', accept: '.json,application/json', onchange: importBackup }))));
 }
 
+function loginScreen() {
+  return h('div', { class: 'hero' },
+    h('h1', {}, 'OMNIA ', h('span', {}, 'Ω')), h('p', { class: 'muted' }, 'Comprendre. Décider. Agir. Progresser.'),
+    h('form', { id: 'connexion', class: 'card stack', onsubmit: act((ev) => api('POST', '/session', formData(ev.target))) },
+      h('h2', {}, 'Connexion'),
+      h('label', {}, 'Adresse e-mail', h('input', { name: 'email', type: 'email', required: true, autocomplete: 'username' })),
+      h('label', {}, 'Mot de passe', h('input', { name: 'password', type: 'password', required: true, autocomplete: 'current-password' })),
+      h('div', {}, h('button', { class: 'primary' }, 'Se connecter'))));
+}
+
+const ROLE_LABELS = { lecteur: 'Lecteur — consulte', membre: 'Membre — saisit et décide', proprietaire: 'Propriétaire — autorise et administre' };
+
+// Comptes et membres : visibles selon le régime (sans compte / avec comptes) et le rôle.
+async function accountsCards(w) {
+  const cards = [];
+  if (!state.accounts) {
+    cards.push(h('form', { class: 'card stack', onsubmit: act(async (ev) => { const f = formData(ev.target); await api('POST', '/comptes', f); await api('POST', '/session', { email: f.email, password: f.password }); }, 'Comptes activés — vous êtes administrateur') },
+      h('h2', {}, 'Travailler à plusieurs'),
+      h('p', { class: 'muted small' }, 'OMNIA fonctionne aujourd\'hui sans compte : toute personne ayant accès à cette adresse peut tout faire. Créer un premier compte active la connexion obligatoire et les rôles par espace. Ce compte sera administrateur.'),
+      h('div', { class: 'row' }, h('label', {}, 'Votre nom', h('input', { name: 'name', required: true, maxLength: 80, autocomplete: 'name' })), h('label', {}, 'Adresse e-mail', h('input', { name: 'email', type: 'email', required: true, autocomplete: 'username' })),
+        h('label', {}, 'Mot de passe (10 caractères min.)', h('input', { name: 'password', type: 'password', required: true, minLength: 10, autocomplete: 'new-password' }))),
+      h('div', {}, h('button', {}, 'Activer les comptes'))));
+    return cards;
+  }
+  if (w.role === 'proprietaire') {
+    const members = await api('GET', ws('/membres'));
+    cards.push(h('div', { class: 'card stack' }, h('h2', {}, 'Membres de cet espace'),
+      h('p', { class: 'muted small' }, 'Lecteur : consulte. Membre : saisit, analyse, accepte des recommandations. Propriétaire : autorise les actions sensibles, gère automatisations, réglages et membres.'),
+      members.length ? members.map((m) => h('div', { class: 'row between' }, h('span', {}, h('strong', {}, m.name), h('span', { class: 'muted small' }, ` ${m.email}`)),
+        h('div', { class: 'row' }, h('select', { 'aria-label': `Rôle de ${m.name}`, onchange: act((ev) => api('PUT', ws('/membres'), { email: m.email, role: ev.target.value }), 'Rôle mis à jour') }, Object.entries(ROLE_LABELS).map(([v, l]) => h('option', { value: v, selected: v === m.role }, l))),
+          h('button', { class: 'link danger', onclick: act(() => api('DELETE', ws(`/membres/${m.id}`)), 'Membre retiré') }, 'Retirer')))) : empty('Aucun membre désigné : seuls les administrateurs y accèdent.'),
+      h('form', { class: 'inline', onsubmit: act((ev) => api('PUT', ws('/membres'), formData(ev.target)), 'Membre ajouté') },
+        h('label', { class: 'grow' }, 'Adresse e-mail d\'un compte existant', h('input', { name: 'email', type: 'email', required: true })),
+        h('label', {}, 'Rôle', h('select', { name: 'role' }, Object.entries(ROLE_LABELS).map(([v, l]) => h('option', { value: v, selected: v === 'membre' }, l)))), h('button', {}, 'Ajouter'))));
+  }
+  if (state.user.admin) {
+    const users = await api('GET', '/comptes');
+    cards.push(h('div', { class: 'card stack' }, h('h2', {}, `Comptes (${users.length})`),
+      users.map((u) => h('div', { class: 'row between' }, h('span', {}, h('strong', {}, u.name), h('span', { class: 'muted small' }, ` ${u.email}`), u.admin ? [' ', badge('pro', 'administrateur')] : null),
+        u.id !== state.user.id ? h('button', { class: 'link danger', onclick: act(async () => { if (window.confirm(`Supprimer le compte de ${u.name} ?`)) await api('DELETE', `/comptes/${u.id}`); }) }, 'Supprimer') : h('span', { class: 'muted small' }, 'vous'))),
+      h('form', { class: 'inline', onsubmit: act((ev) => { const f = formData(ev.target); return api('POST', '/comptes', { ...f, admin: f.admin === 'on' }); }, 'Compte créé — transmettez le mot de passe par un canal sûr') },
+        h('label', {}, 'Nom', h('input', { name: 'name', required: true, maxLength: 80 })), h('label', {}, 'Adresse e-mail', h('input', { name: 'email', type: 'email', required: true })),
+        h('label', {}, 'Mot de passe initial', h('input', { name: 'password', type: 'password', required: true, minLength: 10, autocomplete: 'new-password' })),
+        h('label', { class: 'check' }, h('input', { name: 'admin', type: 'checkbox' }), 'Administrateur'), h('button', {}, 'Créer le compte'))));
+  }
+  return cards;
+}
+
 function go(view) { state.view = view; state.openDoc = null; render(); }
 
 async function render() {
   try {
+    const etat = await api('GET', '/etat');
+    state.accounts = etat.comptes; state.user = etat.utilisateur;
+    if (etat.comptes && !etat.utilisateur) return $app.replaceChildren(loginScreen());
     state.meta ??= await api('GET', '/meta');
     state.workspaces = await api('GET', '/espaces');
     if (!state.workspaces.some((w) => w.id === state.wsId)) state.wsId = state.workspaces[0]?.id ?? null;
@@ -410,7 +464,9 @@ async function render() {
       h('select', { 'aria-label': 'Espace', onchange: (ev) => { if (ev.target.value === 'nouveau') state.view = 'nouveau'; else { state.wsId = Number(ev.target.value); localStorage.setItem('omnia.ws', state.wsId); state.chat = []; state.openDoc = null; } render(); } },
         state.workspaces.map((w) => h('option', { value: w.id, selected: w.id === state.wsId }, w.name)), h('option', { value: 'nouveau' }, '+ Nouvel espace…')),
       allowed.map(([id, label]) => h('button', { class: `nav ${id === state.view ? 'active' : ''}`, 'aria-current': id === state.view ? 'page' : null, onclick: () => go(id) }, label, id === 'actions' && pending ? h('span', { class: 'count', title: 'Actions en attente d\'autorisation' }, pending) : null)),
-      h('div', { class: 'foot muted small' }, state.meta.ai.generative ? `IA : ${state.meta.ai.provider}` : 'Mode local, sans IA générative'));
+      h('div', { class: 'foot muted small stack' },
+        state.user ? h('div', {}, `${state.user.name} · ${state.user.admin ? 'administrateur' : state.workspace.role}`, ' ', h('button', { class: 'link', onclick: act(() => api('DELETE', '/session')) }, 'Se déconnecter')) : null,
+        h('span', {}, state.meta.ai.generative ? `IA : ${state.meta.ai.provider}` : 'Mode local, sans IA générative')));
     const scroll = window.scrollY;
     $app.replaceChildren(h('div', { class: 'layout' }, side, h('main', {}, content)));
     window.scrollTo(0, scroll);

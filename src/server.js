@@ -9,6 +9,7 @@ import { loadConfig, isLoopback } from './config.js';
 import { openDb } from './core/db.js';
 import { createAI } from './ai/index.js';
 import { createKernel, OmniaError } from './core/kernel.js';
+import { AuthError, roleAtLeast, requestContext } from './core/auth.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
@@ -35,11 +36,41 @@ function readBody(req) {
 
 // Table de routage : [méthode, motif, gestionnaire(kernel, params, corps, requête)].
 const id = (v) => { const n = Number(v); if (!Number.isInteger(n) || n <= 0) throw new OmniaError('Identifiant invalide'); return n; };
+// Rôle minimal exigé dans un espace lorsque les comptes sont activés.
+function requiredRole(method, pathname) {
+  if (/\/membres(\/\d+)?$/.test(pathname)) return 'proprietaire';
+  if (/^\/api\/espaces\/\d+$/.test(pathname) && method !== 'GET') return 'proprietaire';
+  if (/\/actions\/\d+\/(approuver|refuser)$/.test(pathname)) return 'proprietaire';
+  if (/\/automatisations(\/\d+)?$/.test(pathname) && method !== 'GET') return 'proprietaire';
+  return method === 'GET' ? 'lecteur' : 'membre';
+}
+const own = (k, c, w) => { if (c.user) k.auth.setMember(w.id, { userId: c.user.id, role: 'proprietaire' }); return w; };
+
 const ROUTES = [
+  ['GET', '/api/etat', (k, p, b, c) => ({ comptes: c.accounts, utilisateur: c.user }), 'public'],
+  ['POST', '/api/session', (k, p, b, c) => {
+    if (!c.accounts) throw new OmniaError('Les comptes ne sont pas activés');
+    const s = k.auth.login(b.email, b.password, c.clientKey);
+    c.headers['set-cookie'] = c.cookie(s.token, s.maxAge);
+    return { utilisateur: s.user };
+  }, 'public'],
+  ['DELETE', '/api/session', (k, p, b, c) => { k.auth.logout(c.sessionToken); c.headers['set-cookie'] = c.cookie('', 0); }, 'public'],
+  ['GET', '/api/comptes', (k) => k.auth.listUsers(), 'admin'],
+  // Le premier compte créé devient administrateur et active le régime des comptes.
+  ['POST', '/api/comptes', (k, p, b, c) => k.auth.createUser(b, { admin: !c.accounts || b.admin === true }), 'admin'],
+  ['DELETE', '/api/comptes/:id', (k, p, b, c) => k.auth.removeUser(p.id, c.user?.id), 'admin'],
   ['GET', '/api/meta', (k) => k.meta()],
-  ['GET', '/api/espaces', (k) => k.listWorkspaces()],
-  ['POST', '/api/espaces', (k, p, b) => k.createWorkspace(b)],
-  ['POST', '/api/espaces/import', (k, p, b) => k.importWorkspace(b)],
+  ['GET', '/api/espaces', (k, p, b, c) => {
+    const all = k.listWorkspaces();
+    if (!c.user) return all;
+    const mine = new Set(k.auth.workspaceIds(c.user));
+    return all.filter((w) => c.user.admin || mine.has(w.id)).map((w) => ({ ...w, role: k.auth.roleIn(c.user, w.id) }));
+  }],
+  ['POST', '/api/espaces', async (k, p, b, c) => own(k, c, await k.createWorkspace(b))],
+  ['POST', '/api/espaces/import', (k, p, b, c) => own(k, c, k.importWorkspace(b))],
+  ['GET', '/api/espaces/:ws/membres', (k, p) => k.auth.members(k.workspace(p.ws).id)],
+  ['PUT', '/api/espaces/:ws/membres', (k, p, b) => k.auth.setMember(k.workspace(p.ws).id, { email: b.email, role: b.role })],
+  ['DELETE', '/api/espaces/:ws/membres/:id', (k, p) => k.auth.removeMember(k.workspace(p.ws).id, p.id)],
   ['GET', '/api/espaces/:ws', (k, p) => k.workspace(p.ws)],
   ['GET', '/api/espaces/:ws/export', (k, p) => k.exportWorkspace(p.ws)],
   ['PATCH', '/api/espaces/:ws', (k, p, b) => k.updateWorkspace(p.ws, b)],
@@ -74,10 +105,10 @@ const ROUTES = [
   ['PATCH', '/api/espaces/:ws/automatisations/:id', (k, p, b) => k.updateAutomation(k.workspace(p.ws).id, p.id, b)],
   ['DELETE', '/api/espaces/:ws/automatisations/:id', (k, p) => k.deleteAutomation(k.workspace(p.ws).id, p.id)],
   ['GET', '/api/espaces/:ws/journal', (k, p) => ({ entries: k.audit.list(k.workspace(p.ws).id), integrity: k.audit.verify() })],
-].map(([method, pattern, handler]) => {
+].map(([method, pattern, handler, access]) => {
   const names = [];
   const regex = new RegExp(`^${pattern.replace(/:(\w+)/g, (_, n) => { names.push(n); return '(\\d+)'; })}$`);
-  return { method, regex, names, handler };
+  return { method, regex, names, handler, access };
 });
 
 export function createApp(config, kernel) {
@@ -93,8 +124,14 @@ export function createApp(config, kernel) {
     res.end(payload);
   };
 
+  const sessionToken = (req) => (req.headers.cookie ?? '').split(';').map((c) => c.trim().split('=')).find(([n]) => n === 'omnia_session')?.[1] ?? '';
+  const cookie = (token, maxAge) => `omnia_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${config.cookieSecure ? '; Secure' : ''}`;
+
   async function handleApi(req, res, url) {
-    if (!tokenOk(req)) return send(res, 401, { error: 'Jeton d\'accès requis' });
+    // Deux régimes : sans compte, accès local ou par jeton ; avec comptes, session et rôles.
+    const accounts = kernel.auth.enabled();
+    const user = accounts ? kernel.auth.userForToken(sessionToken(req)) : null;
+    if (!accounts && !tokenOk(req)) return send(res, 401, { error: 'Jeton d\'accès requis' });
     if (req.method !== 'GET') {
       // Protection CSRF : JSON obligatoire, et l'origine, si le navigateur en envoie une, doit être la nôtre.
       if (!(req.headers['content-type'] ?? '').startsWith('application/json')) return send(res, 415, { error: 'Content-Type application/json requis' });
@@ -106,9 +143,20 @@ export function createApp(config, kernel) {
       const m = url.pathname.match(r.regex);
       if (!m) continue;
       const params = Object.fromEntries(r.names.map((n, i) => [n, id(m[i + 1])]));
+      if (accounts) {
+        if (r.access !== 'public' && !user) return send(res, 401, { error: 'Connexion requise', comptes: true });
+        if (r.access === 'admin' && !user.admin) return send(res, 403, { error: 'Réservé aux administrateurs' });
+        if (params.ws) {
+          const role = kernel.auth.roleIn(user, params.ws);
+          if (!role) return send(res, 404, { error: 'Espace introuvable' }); // ne révèle pas l'existence d'un espace
+          const needed = requiredRole(req.method, url.pathname);
+          if (!roleAtLeast(role, needed)) return send(res, 403, { error: `Votre rôle (${role}) ne permet pas cette action : rôle « ${needed} » requis` });
+        }
+      }
       const body = req.method === 'GET' ? {} : await readBody(req);
-      const out = await r.handler(kernel, params, body, req);
-      return send(res, out === undefined ? 204 : 200, out);
+      const ctx = { accounts, user, headers: {}, sessionToken: sessionToken(req), clientKey: req.socket.remoteAddress ?? '', cookie };
+      const out = await requestContext.run({ actor: user?.name }, () => r.handler(kernel, params, body, ctx));
+      return send(res, out === undefined ? 204 : 200, out, ctx.headers);
     }
     return send(res, 404, { error: 'Ressource introuvable' });
   }
@@ -131,7 +179,7 @@ export function createApp(config, kernel) {
       if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
       return handleStatic(req, res, url);
     } catch (e) {
-      if (e instanceof OmniaError) return send(res, e.status, { error: e.message });
+      if (e instanceof OmniaError || e instanceof AuthError) return send(res, e.status, { error: e.message });
       if (e instanceof URIError || e instanceof TypeError && /Invalid URL/.test(e.message)) return send(res, 400, { error: 'Requête invalide' });
       console.error('[omnia] erreur interne :', e);
       return send(res, 500, { error: 'Erreur interne' });
@@ -141,11 +189,12 @@ export function createApp(config, kernel) {
 
 export function start(overrides = {}) {
   const config = loadConfig(overrides);
-  if (!isLoopback(config.host) && !config.token) {
-    throw new Error('Refus de démarrer : OMNIA_HOST expose le serveur au réseau sans OMNIA_TOKEN. Définissez un jeton d\'accès.');
-  }
   const db = openDb(config.dbPath);
   const kernel = createKernel({ db, ai: createAI(config.ai), config });
+  if (!isLoopback(config.host) && !config.token && !kernel.auth.enabled()) {
+    db.close();
+    throw new Error('Refus de démarrer : OMNIA_HOST expose le serveur au réseau sans protection. Définissez OMNIA_TOKEN, ou créez d\'abord un compte en accès local.');
+  }
   const server = createApp(config, kernel);
   let busy = false;
   const timer = setInterval(async () => {

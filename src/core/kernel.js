@@ -2,6 +2,7 @@
 // comprendre → analyser → décider → agir (avec autorisation) → mesurer → apprendre.
 import { now, today, parseJson } from './db.js';
 import { createAudit } from './audit.js';
+import { createAuth } from './auth.js';
 import { transactionsFromCsv } from './csv.js';
 import { understand, KINDS, SECTORS } from '../engines/understanding.js';
 import { analyze, computeKpis, dataGaps, RULES } from '../engines/analysis.js';
@@ -21,6 +22,7 @@ const TASK_STATUSES = ['a_faire', 'en_cours', 'fait'];
 
 export function createKernel({ db, ai, config }) {
   const audit = createAudit(db);
+  const auth = createAuth(db, audit);
   const connectors = createConnectors(config);
   const clock = () => (config.clock ? config.clock() : new Date());
 
@@ -66,7 +68,7 @@ export function createKernel({ db, ai, config }) {
   function deleteWorkspace(id) {
     const w = workspace(id);
     db.tx(() => {
-      for (const t of ['projects', 'tasks', 'transactions', 'documents', 'insights', 'recommendations', 'actions', 'automations', 'rule_weights', 'metrics']) {
+      for (const t of ['projects', 'tasks', 'transactions', 'documents', 'insights', 'recommendations', 'actions', 'automations', 'rule_weights', 'metrics', 'memberships']) {
         db.run(`DELETE FROM ${t} WHERE workspace_id = ?`, w.id);
       }
       db.run('DELETE FROM workspaces WHERE id = ?', w.id);
@@ -437,7 +439,7 @@ export function createKernel({ db, ai, config }) {
   }
 
   return {
-    audit, execution, connectors, ai,
+    audit, auth, execution, connectors, ai,
     meta: () => ({ modules: MODULES, kinds: KINDS, sectors: SECTORS, templates: Object.entries(TEMPLATES).map(([id, t]) => ({ id, title: t.title })), actionTypes: execution.types(), connectors: connectors.list(), ai: { provider: ai.provider, model: ai.model, generative: ai.generative } }),
     listWorkspaces: () => db.all('SELECT * FROM workspaces ORDER BY id').map(wsRow),
     workspace, createWorkspace, updateWorkspace, deleteWorkspace, exportWorkspace, importWorkspace,
