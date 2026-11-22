@@ -6,17 +6,23 @@ import crypto from 'node:crypto';
 const SCRYPT = { N: 2 ** 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 const SKIPPED = new Set(['sessions']); // les sessions ouvertes ne se sauvegardent pas : on se reconnecte
 const SEEDED = 'instance.amorcee';
+const USED = 'instance.utilisee';
+const SYSTEM = ['automatisation', 'omnia']; // ce que le système fait seul se refait : cela ne compte pas comme un travail
 const sha = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex');
 const keyOf = (phrase, salt) => crypto.scryptSync(phrase, salt, 32, SCRYPT);
 
 export function createBackup({ db, audit, fail, now }) {
   const tables = () => db.all("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").map((t) => t.name);
   const dump = () => Object.fromEntries(tables().filter((t) => !SKIPPED.has(t)).map((t) => [t, db.all(`SELECT * FROM ${t} ORDER BY rowid`)]));
-  // Intacte : aucune donnée, ou rien d'autre que l'amorçage, que le fichier d'amorçage sait recréer.
+  // Intacte : aucune donnée ; ou bien, depuis l'amorçage, rien d'autre que ce que le système a fait seul
+  // (analyses, imports périodiques), que l'amorçage et ses automatisations savent refaire. Toute écriture venue
+  // d'une personne ou d'une clé d'API, journalisée ou non, passe par `markUsed` et lève cet état.
   const pristine = () => {
-    const last = db.get('SELECT event FROM audit_log ORDER BY id DESC LIMIT 1');
-    return last ? last.event === SEEDED : tables().every((t) => !db.get(`SELECT 1 AS x FROM ${t} LIMIT 1`));
+    const seed = db.get('SELECT MAX(id) AS id FROM audit_log WHERE event = ?', SEEDED)?.id;
+    if (!seed) return !db.get('SELECT 1 AS x FROM audit_log LIMIT 1') && tables().every((t) => !db.get(`SELECT 1 AS x FROM ${t} LIMIT 1`));
+    return !db.get(`SELECT 1 AS x FROM audit_log WHERE id > ? AND actor NOT IN (${SYSTEM.map(() => '?').join(', ')}) LIMIT 1`, seed, ...SYSTEM);
   };
+  const markUsed = () => { if (pristine() && db.get('SELECT 1 AS x FROM workspaces LIMIT 1')) audit.record({ event: USED, entity: 'instance', detail: {} }); };
 
   function seal(phrase) {
     if (typeof phrase !== 'string' || phrase.length < 12) fail('Phrase secrète requise : 12 caractères au moins');
@@ -65,5 +71,5 @@ export function createBackup({ db, audit, fail, now }) {
     return { restauree: true, sauvegarde_du: payload.created_at, espaces: db.get('SELECT COUNT(*) AS n FROM workspaces').n };
   }
 
-  return { seal, open, restore, dump, pristine, markSeeded: (count) => audit.record({ event: SEEDED, entity: 'instance', detail: { espaces: count } }) };
+  return { seal, open, restore, dump, pristine, markUsed, markSeeded: (count) => audit.record({ event: SEEDED, entity: 'instance', detail: { espaces: count } }) };
 }

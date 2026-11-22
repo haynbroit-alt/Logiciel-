@@ -205,6 +205,7 @@ const views = {
   async tableau() {
     const d = await api('GET', ws('/tableau-de-bord')); const cur = d.workspace.currency; const k = d.kpis;
     const coord = d.workspace.central ? await api('GET', '/coordination') : null;
+    const missions = d.workspace.central ? await api('GET', ws('/missions')) : null;
     const openWs = (id) => () => { state.wsId = id; localStorage.setItem('omnia.ws', id); state.chat = []; state.openDoc = null; render(); };
     const kpi = (label, value, neg) => h('div', { class: 'card kpi' }, h('div', { class: 'muted small' }, label), h('div', { class: `v ${neg ? 'neg' : ''}` }, value));
     const maxCat = Math.max(1, ...d.expensesByCategory.map((c) => c.total));
@@ -219,6 +220,14 @@ const views = {
           h('div', { class: 'row between' }, h('button', { class: 'link', onclick: openWs(e.id) }, e.name),
             h('span', { class: 'small muted' }, `${e.taches_ouvertes} tâche(s)${e.taches_en_retard ? ` · ${e.taches_en_retard} en retard` : ''}${e.autorisations_en_attente ? ` · ${e.autorisations_en_attente} autorisation(s)` : ''} · ${money(e.revenus_30j, e.currency)} encaissés (30 j)`)),
           e.prochaine_tache ? h('p', { class: 'small muted' }, e.prochaine_tache.title) : null))) : null,
+      missions ? h('div', { class: 'card stack' }, h('h2', {}, `Missions (${missions.length})`),
+        h('form', { class: 'stack', onsubmit: act((ev) => api('POST', ws('/missions'), { title: formData(ev.target).title, due_date: formData(ev.target).due_date, workspaces: [...ev.target.querySelectorAll('input[name=projet]:checked')].map((i) => Number(i.value)) }), (m) => toast(`Mission confiée à ${m.total} projet(s)`)) },
+          h('label', {}, 'Objectif à confier', h('input', { name: 'title', required: true, maxLength: 300, placeholder: 'Ex. : préparer une offre vendable' })),
+          h('label', {}, 'Échéance', h('input', { name: 'due_date', type: 'date' })),
+          h('div', { class: 'row' }, coord.espaces.map((e) => h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'projet', value: e.id }), e.name))),
+          h('div', {}, h('button', { class: 'primary' }, 'Confier la mission'))),
+        missions.map((m) => h('div', { class: 'item' }, h('div', { class: 'row between' }, h('strong', {}, m.title), h('span', { class: 'small muted' }, `${m.faits} / ${m.total} fait(s)${m.due_date ? ` · pour le ${fdate(m.due_date)}` : ''}`)),
+          h('p', { class: 'small muted' }, m.projets.map((x) => `${x.espace} : ${x.status === 'fait' ? 'fait' : 'à faire'}`).join(' · '))))) : null,
       d.priorities.length ? h('div', { class: 'card stack' }, h('h2', {}, 'Priorités du moment'),
         h('ol', { class: 'prio' }, d.priorities.map((x) => h('li', {}, h('strong', {}, x.title), ' ', badge(x.kind === 'autorisation' ? 'en_attente' : x.kind === 'recommandation' ? 'opportunite' : 'probleme', x.kind), h('div', { class: 'muted small' }, x.why))))) : null,
       d.gaps.length ? h('div', { class: 'notice info stack', role: 'note' }, h('strong', {}, 'Pour une analyse plus complète'), d.gaps.map((g) => h('span', { class: 'small' }, g))) : null,

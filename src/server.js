@@ -47,6 +47,8 @@ function requiredRole(method, pathname) {
 }
 const studioWs = (k, p) => { const w = k.workspace(p.ws); if (!w.modules.includes('studio')) throw new OmniaError('Le module Studio n\'est pas activé pour cet espace', 409); return w.id; };
 const cinemaWs = (k, p) => { const w = k.workspace(p.ws); if (!w.modules.includes('cinema')) throw new OmniaError('Le module Studio de cinéma n\'est pas activé pour cet espace', 409); return w.id; };
+// Espaces où la personne a au moins ce rôle (tous, sans comptes ou pour un administrateur).
+const spacesWith = (k, c, role) => k.listWorkspaces().filter((w) => !c.user || c.user.admin || roleAtLeast(k.auth.roleIn(c.user, w.id) ?? '', role)).map((w) => w.id);
 const own = (k, c, w) => { if (c.user) k.auth.setMember(w.id, { userId: c.user.id, role: 'proprietaire' }); return w; };
 
 const ROUTES = [
@@ -109,7 +111,10 @@ const ROUTES = [
     return all.filter((w) => c.user.admin || mine.has(w.id)).map((w) => ({ ...w, role: k.auth.roleIn(c.user, w.id) }));
   }],
   // Coordination : uniquement les espaces auxquels la personne a droit (tous sans comptes ou pour un administrateur).
-  ['GET', '/api/coordination', (k, p, b, c) => k.coordination(k.listWorkspaces().filter((w) => !c.user || c.user.admin || k.auth.roleIn(c.user, w.id)).map((w) => w.id))],
+  ['GET', '/api/coordination', (k, p, b, c) => k.coordination(spacesWith(k, c, 'lecteur'))],
+  // Missions : lancées depuis l'espace central, vers les seuls projets où la personne peut écrire.
+  ['GET', '/api/espaces/:ws/missions', (k, p, b, c) => k.missions(k.workspace(p.ws).id, spacesWith(k, c, 'lecteur'))],
+  ['POST', '/api/espaces/:ws/missions', (k, p, b, c) => k.createMission(k.workspace(p.ws).id, b, spacesWith(k, c, 'membre'))],
   ['POST', '/api/espaces', async (k, p, b, c) => own(k, c, await k.createWorkspace(b))],
   ['POST', '/api/espaces/import', (k, p, b, c) => own(k, c, k.importWorkspace(b))],
   ['GET', '/api/espaces/:ws/membres', (k, p) => k.auth.members(k.workspace(p.ws).id)],
@@ -214,6 +219,8 @@ export function createApp(config, kernel) {
       const ctx = { accounts, user, headers: {}, sessionToken: sessionToken(req), clientKey: req.socket.remoteAddress ?? '', cookie };
       const out = await requestContext.run({ actor: apiWs ? 'api' : user?.name }, () => r.handler(kernel, params, body, ctx));
       // Les événements nés de cette requête sont traités ensuite, sans faire attendre la réponse.
+      // Toute écriture reçue par l'API fait de l'instance un lieu de travail : une restauration ne l'écrasera plus.
+      if (req.method !== 'GET' && url.pathname !== '/api/instance/restauration') kernel.backup.markUsed();
       if (req.method !== 'GET') kernel.processEvents().catch((e) => console.error('[omnia] événements :', e.message));
       if (out?.__file) {
         // Lecture vidéo : les requêtes partielles permettent au lecteur d'avancer et de reculer dans le film.
@@ -279,6 +286,8 @@ export function seedWorkspaces(kernel, file) {
   const payloads = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (!Array.isArray(payloads)) throw new Error('Fichier d\'amorçage invalide : un tableau de sauvegardes est attendu');
   for (const payload of payloads) kernel.importWorkspace(payload);
+  // Un import remet les automatisations en pause ; celles du fichier d'amorçage, relu avec le dépôt, sont réactivées.
+  for (const w of kernel.listWorkspaces()) for (const a of kernel.listAutomations(w.id)) kernel.updateAutomation(w.id, a.id, { enabled: true });
   kernel.backup.markSeeded(payloads.length); // tant que rien d'autre n'arrive, l'instance reste restaurable
   return payloads.length;
 }

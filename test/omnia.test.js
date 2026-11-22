@@ -711,6 +711,9 @@ test('amorçage : l\'espace central puis les 17 espaces de projets, sur une base
   assert.deepEqual(spaces.map((w) => w.central), [true, ...Array(17).fill(false)], 'un seul espace central, distinct des projets');
   assert.ok(spaces.slice(1).every((w) => w.modules.includes('studio') && w.description.includes('Prochaine action')));
   assert.equal(k.data(spaces[1].id).tasks.length, 1);
+  const autos = spaces.map((w) => k.listAutomations(w.id));
+  assert.deepEqual(autos[0].map((a) => [a.action_type, a.enabled]).sort(), [['analyse.lancer', 1], ['stripe.importer', 1]], 'le centre importe Stripe et s\'analyse chaque jour');
+  assert.ok(autos.slice(1).every((list) => list.length === 1 && list[0].action_type === 'analyse.lancer' && list[0].enabled === 1), 'chaque projet s\'analyse chaque jour');
   assert.equal(seedWorkspaces(k, file), 0); assert.equal(k.listWorkspaces().length, 18);
 });
 
@@ -827,4 +830,73 @@ test('mémoire partagée : privée par défaut, partage explicite et révocable,
   assert.deepEqual(k.sharedDocuments(central.id), [], 'le partage se retire');
   assert.deepEqual(k.audit.list(alll.id).filter((e) => e.event.startsWith('document.partage')).map((e) => e.event).reverse(), ['document.partage', 'document.partage_retire']);
   assert.ok(!('shared' in k.exportWorkspace(alll.id).documents[0]), 'une sauvegarde d\'espace restaure des documents privés');
+});
+
+test('missions : un objectif confié à plusieurs projets, une tâche dans chaque espace, avancement lu en direct, droits respectés', async () => {
+  const { k, config } = setup();
+  seedWorkspaces(k, path.join(import.meta.dirname, '..', 'seed', 'velyx.json'));
+  const [central, alll, velyx, ref] = k.listWorkspaces(); const everyone = k.listWorkspaces().map((w) => w.id);
+  assert.throws(() => k.createMission(alll.id, { title: 'x', workspaces: [velyx.id] }, everyone), /espace central/);
+  assert.throws(() => k.createMission(central.id, { title: 'x', workspaces: [] }, everyone), /au moins un projet/);
+  assert.throws(() => k.createMission(central.id, { title: 'x', workspaces: [central.id] }, everyone), /ne se confie pas/);
+  const before = k.data(alll.id).tasks.length;
+  const m = k.createMission(central.id, { title: 'Préparer une offre vendable', due_date: d(-7), workspaces: [alll.id, velyx.id] }, everyone);
+  assert.deepEqual([m.total, m.faits, m.projets.map((x) => x.workspace_id)], [2, 0, [alll.id, velyx.id]]);
+  assert.equal(k.data(alll.id).tasks.length, before + 1); assert.equal(k.data(ref.id).tasks.length, 1, 'un projet non visé ne reçoit rien');
+  assert.equal(k.data(central.id).tasks.length, 0, 'aucune copie dans l\'espace central');
+  k.updateTask(alll.id, m.projets[0].task_id, { status: 'fait' });
+  assert.equal(k.missions(central.id, everyone)[0].faits, 1, 'l\'avancement se lit dans l\'espace du projet');
+  assert.deepEqual(k.missions(central.id, [velyx.id])[0].projets.map((x) => x.workspace_id), [velyx.id], 'on ne voit que ses espaces');
+  assert.deepEqual(k.missions(central.id, [ref.id]), []);
+
+  // Par HTTP : Zoé écrit dans le centre et dans Velyx seulement ; elle ne peut pas confier une mission à Alll.
+  k.auth.createUser({ name: 'Admin', email: 'admin@exemple.fr', password: 'motdepasse-solide-1' }, { admin: true });
+  const zoe = k.auth.createUser({ name: 'Zoé', email: 'zoe@exemple.fr', password: 'motdepasse-solide-2' });
+  k.auth.setMember(central.id, { userId: zoe.id, role: 'membre' }); k.auth.setMember(velyx.id, { userId: zoe.id, role: 'membre' }); k.auth.setMember(ref.id, { userId: zoe.id, role: 'lecteur' });
+  const server = createApp(config, k); await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`; const json = { 'content-type': 'application/json' };
+  try {
+    const cookie = (await fetch(`${base}/api/session`, { method: 'POST', headers: json, body: JSON.stringify({ email: 'zoe@exemple.fr', password: 'motdepasse-solide-2' }) })).headers.get('set-cookie').split(';')[0];
+    const post = (workspaces) => fetch(`${base}/api/espaces/${central.id}/missions`, { method: 'POST', headers: { ...json, cookie }, body: JSON.stringify({ title: 'Mission de Zoé', workspaces }) });
+    assert.equal((await post([alll.id])).status, 403, 'pas de droit sur Alll');
+    assert.equal((await post([ref.id])).status, 403, 'lectrice de Ref : elle n\'y écrit pas');
+    assert.equal(k.data(alll.id).tasks.length, before + 1, 'un refus n\'écrit rien');
+    assert.equal((await post([velyx.id])).status, 200);
+    const seen = await (await fetch(`${base}/api/espaces/${central.id}/missions`, { headers: { cookie } })).json();
+    assert.ok(seen.every((x) => x.projets.every((pr) => pr.workspace_id === velyx.id)), 'elle ne voit pas l\'avancement d\'Alll');
+  } finally { await new Promise((r) => server.close(r)); }
+});
+
+test('sauvegarde d\'instance : le travail du système seul n\'empêche pas de restaurer, une écriture reçue par l\'API si', async () => {
+  const phrase = 'une phrase secrète assez longue'; const seed = path.join(import.meta.dirname, '..', 'seed', 'velyx.json');
+  const source = setup().k; seedWorkspaces(source, seed);
+  source.createTransaction(source.listWorkspaces()[1].id, { date: d(0), amount: 29, label: 'Vente' });
+  const file = JSON.parse(JSON.stringify(source.backup.seal(phrase)));
+
+  // Après un redémarrage : amorçage, puis les automatisations tournent d'elles-mêmes. On doit encore pouvoir restaurer.
+  const { k, config } = setup(); seedWorkspaces(k, seed);
+  await k.tick(); await k.processEvents();
+  assert.ok(k.audit.list(k.listWorkspaces()[0].id, 500).some((e) => e.event === 'analyse.executee'), 'les analyses quotidiennes ont tourné');
+  assert.equal(k.backup.pristine(), true);
+
+  // Une écriture par l'API, même non journalisée (une tâche), fait de l'instance un lieu de travail.
+  const server = createApp(config, k); await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`; const json = { 'content-type': 'application/json' };
+  try {
+    const ws = k.listWorkspaces()[1].id;
+    assert.equal((await fetch(`${base}/api/espaces/${ws}/donnees`)).status, 200); assert.equal(k.backup.pristine(), true, 'une lecture ne compte pas');
+    assert.equal((await fetch(`${base}/api/espaces/${ws}/taches`, { method: 'POST', headers: json, body: JSON.stringify({ title: 'Travail en cours' }) })).status, 200);
+    assert.equal(k.backup.pristine(), false);
+    const refused = await fetch(`${base}/api/instance/restauration`, { method: 'POST', headers: json, body: JSON.stringify({ phrase, sauvegarde: file }) });
+    assert.equal(refused.status, 409); assert.ok(k.data(ws).tasks.some((x) => x.title === 'Travail en cours'), 'le travail en cours est intact');
+  } finally { await new Promise((r) => server.close(r)); }
+
+  // Sur une autre instance redémarrée et restée sans intervention, la restauration passe par l'API.
+  const other = setup(); seedWorkspaces(other.k, seed); await other.k.tick(); await other.k.processEvents();
+  const server2 = createApp(other.config, other.k); await new Promise((r) => server2.listen(0, '127.0.0.1', r));
+  try {
+    const ok = await fetch(`http://127.0.0.1:${server2.address().port}/api/instance/restauration`, { method: 'POST', headers: json, body: JSON.stringify({ phrase, sauvegarde: file }) });
+    assert.equal(ok.status, 200); assert.equal(other.k.data(other.k.listWorkspaces()[1].id).transactions[0].amount, 29);
+    assert.equal(other.k.backup.pristine(), false, 'une fois restaurée, l\'instance porte du travail');
+  } finally { await new Promise((r) => server2.close(r)); }
 });

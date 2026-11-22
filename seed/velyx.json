@@ -8,9 +8,28 @@
    "description": "Espace central de l'écosystème. Il coordonne les 17 projets sans en copier les données : chaque projet garde son espace, ses données et ses droits. Stripe est rattaché à cet espace seul.",
    "kind": "entreprise",
    "sector": "general",
-   "modules": []
+   "modules": [
+    "automatisations",
+    "connecteurs"
+   ]
   },
-  "tasks": []
+  "tasks": [],
+  "automations": [
+   {
+    "name": "Analyse quotidienne",
+    "every_minutes": 1440,
+    "action_type": "analyse.lancer",
+    "params": {}
+   },
+   {
+    "name": "Import Stripe quotidien",
+    "every_minutes": 1440,
+    "action_type": "stripe.importer",
+    "params": {
+     "days": 30
+    }
+   }
+  ]
  },
  {
   "format": "omnia-espace",
@@ -21,6 +40,7 @@
    "kind": "entreprise",
    "sector": "commerce",
    "modules": [
+    "automatisations",
     "studio"
    ]
   },
@@ -28,6 +48,14 @@
    {
     "title": "Prochaine action : Décision datée : pour vendre avant le 20/12/2026 (critère d'arrêt du dépôt : moins de 30 commandes pour environ 1 000 visites), le statut doit être déposé dans les jours qui viennent, le numéro d'entreprise mettant environ deux semaines selon le dépôt. Puis session 1 de…",
     "priority": 1
+   }
+  ],
+  "automations": [
+   {
+    "name": "Analyse quotidienne",
+    "every_minutes": 1440,
+    "action_type": "analyse.lancer",
+    "params": {}
    }
   ]
  },
@@ -40,6 +68,7 @@
    "kind": "entreprise",
    "sector": "services",
    "modules": [
+    "automatisations",
     "studio"
    ]
   },
@@ -47,6 +76,14 @@
    {
     "title": "Prochaine action : Propriétaire : déposer le statut (gratuit, 20 à 30 minutes selon docs/statut-micro-entreprise.md du dépôt). Agent, sur accord : régénérer la fiche des 4 cabinets et le brouillon de message. C'est le chemin le plus court vers un premier encaissement sans dépense préalable.",
     "priority": 1
+   }
+  ],
+  "automations": [
+   {
+    "name": "Analyse quotidienne",
+    "every_minutes": 1440,
+    "action_type": "analyse.lancer",
+    "params": {}
    }
   ]
  },
@@ -59,6 +96,7 @@
    "kind": "entreprise",
    "sector": "tech",
    "modules": [
+    "automatisations",
     "studio"
    ]
   },
@@ -66,6 +104,14 @@
    {
     "title": "Prochaine action : Relire docs/pilote/MESSAGES.md et envoyer une première demande de pilote. Ajouter une CI, gratuite sur un dépôt public.",
     "priority": 1
+   }
+  ],
+  "automations": [
+   {
+    "name": "Analyse quotidienne",
+    "every_minutes": 1440,
+    "action_type": "analyse.lancer",
+    "params": {}
    }
   ]
  },
@@ -78,6 +124,7 @@
    "kind": "entreprise",
    "sector": "services",
    "modules": [
+    "automatisations",
     "studio"
    ]
   },
@@ -85,6 +132,14 @@
    {
     "title": "Prochaine action : Mesurer l'usage avant toute décision (compteur sans cookie). Sans audience mesurée, aucune action rentable identifiée.",
     "priority": 1
+   }
+  ],
+  "automations": [
+   {
+    "name": "Analyse quotidienne",
+    "every_minutes": 1440,
+    "action_type": "analyse.lancer",
+    "params": {}
    }
   ]
  },
@@ -97,6 +152,7 @@
    "kind": "entreprise",
    "sector": "tech",
    "modules": [
+    "automatisations",
     "studio"
    ]
   },
@@ -104,6 +160,14 @@
    {
     "title": "Prochaine action : Aucune action rentable sans test de demande. Piste à 0 € : proposer le service à la pièce, à la main, à quelques créateurs.",
     "priority": 1
+   }
+  ],
+  "automations": [
+   {
+    "name": "Analyse quotidienne",
+    "every_minutes": 1440,
+    "action_type": "analyse.lancer",
+    "params": {}
    }
   ]
  },
@@ -116,6 +180,7 @@
    "kind": "entreprise",
    "sector": "tech",
    "modules": [
+    "automatisations",
     "studio"
    ]
   },
@@ -123,6 +188,14 @@
    {
     "title": "Prochaine action : Activer le compteur, puis lancer le test de 7 jours (seuil du dépôt : 30 visiteurs inconnus et 3 liens créés par d'autres).",
     "priority": 1
+   }
+  ],
+  "automations": [
+   {
+    "name": "Analyse quotidienne",
+    "every_minutes": 1440,
+    "action_type": "analyse.lancer",
+    "params": {}
    }
   ]
  },
@@ -135,6 +208,7 @@
    "kind": "entreprise",
    "sector": "creatif",
    "modules": [
+    "automatisations",
     "studio"
    ]
   },
@@ -142,6 +216,14 @@
    {
     "title": "Prochaine action : Aucune à 0 € au-delà du mode simulé. À reprendre quand une enveloppe de dépense existera.",
     "priority": 1
+   }
+  ],
+  "automations": [
+   {
+    "name": "Analyse quotidienne",
+    "every_minutes": 1440,
+    "action_type": "analyse.lancer",
+    "params": {}
    }
   ]
  },
@@ -154,6 +236,7 @@
    "kind": "entreprise",
    "sector": "tech",
    "modules": [
+    "automatisations",
     "studio"
    ]
   },
@@ -161,6 +244,14 @@
    {
     "title": "Prochaine action : Aucune action rentable directe. Décision à prendre : en faire la brique AGENTS du moteur, ou le geler.",
     "priority": 1
+   }
+  ],
+  "automations": [
+   {
+    "name": "Analyse quotidienne",
+    "every_minutes": 1440,
+    "action_type": "analyse.lancer",
+    "params": {}
    }
   ]
  },
@@ -173,6 +264,7 @@
    "kind": "entreprise",
    "sector": "tech",
    "modules": [
+    "automatisations",
     "studio"
    ]
   },
@@ -180,6 +272,14 @@
    {
     "title": "Prochaine action : Aucune action rentable directe. Décision du propriétaire : en faire le tableau de bord du portail velyx.org, ou le geler au profit du moteur.",
     "priority": 1
+   }
+  ],
+  "automations": [
+   {
+    "name": "Analyse quotidienne",
+    "every_minutes": 1440,
+    "action_type": "analyse.lancer",
+    "params": {}
    }
   ]
  },
@@ -192,6 +292,7 @@
    "kind": "entreprise",
    "sector": "tech",
    "modules": [
+    "automatisations",
     "studio"
    ]
   },
@@ -199,6 +300,14 @@
    {
     "title": "Prochaine action : Décider de la visibilité du dépôt pour relancer le cycle quotidien, puis y enregistrer le premier encaissement réel quand il existera.",
     "priority": 1
+   }
+  ],
+  "automations": [
+   {
+    "name": "Analyse quotidienne",
+    "every_minutes": 1440,
+    "action_type": "analyse.lancer",
+    "params": {}
    }
   ]
  },
@@ -211,6 +320,7 @@
    "kind": "entreprise",
    "sector": "tech",
    "modules": [
+    "automatisations",
     "studio"
    ]
   },
@@ -218,6 +328,14 @@
    {
     "title": "Prochaine action : Faire de la CI le second acteur du registre ; décider de la visibilité du dépôt.",
     "priority": 1
+   }
+  ],
+  "automations": [
+   {
+    "name": "Analyse quotidienne",
+    "every_minutes": 1440,
+    "action_type": "analyse.lancer",
+    "params": {}
    }
   ]
  },
@@ -230,6 +348,7 @@
    "kind": "entreprise",
    "sector": "tech",
    "modules": [
+    "automatisations",
     "studio"
    ]
   },
@@ -237,6 +356,14 @@
    {
     "title": "Prochaine action : Aucune action rentable identifiée. Garder Tr comme référence et archiver les trois copies réduirait la dispersion : décision du propriétaire.",
     "priority": 1
+   }
+  ],
+  "automations": [
+   {
+    "name": "Analyse quotidienne",
+    "every_minutes": 1440,
+    "action_type": "analyse.lancer",
+    "params": {}
    }
   ]
  },
@@ -249,6 +376,7 @@
    "kind": "entreprise",
    "sector": "tech",
    "modules": [
+    "automatisations",
     "studio"
    ]
   },
@@ -256,6 +384,14 @@
    {
     "title": "Prochaine action : Aucune. Voir Tr.",
     "priority": 1
+   }
+  ],
+  "automations": [
+   {
+    "name": "Analyse quotidienne",
+    "every_minutes": 1440,
+    "action_type": "analyse.lancer",
+    "params": {}
    }
   ]
  },
@@ -268,6 +404,7 @@
    "kind": "entreprise",
    "sector": "tech",
    "modules": [
+    "automatisations",
     "studio"
    ]
   },
@@ -275,6 +412,14 @@
    {
     "title": "Prochaine action : Aucune. Voir Tr.",
     "priority": 1
+   }
+  ],
+  "automations": [
+   {
+    "name": "Analyse quotidienne",
+    "every_minutes": 1440,
+    "action_type": "analyse.lancer",
+    "params": {}
    }
   ]
  },
@@ -287,6 +432,7 @@
    "kind": "entreprise",
    "sector": "tech",
    "modules": [
+    "automatisations",
     "studio"
    ]
   },
@@ -294,6 +440,14 @@
    {
     "title": "Prochaine action : Aucune. Voir Tr.",
     "priority": 1
+   }
+  ],
+  "automations": [
+   {
+    "name": "Analyse quotidienne",
+    "every_minutes": 1440,
+    "action_type": "analyse.lancer",
+    "params": {}
    }
   ]
  },
@@ -306,6 +460,7 @@
    "kind": "entreprise",
    "sector": "commerce",
    "modules": [
+    "automatisations",
     "studio"
    ]
   },
@@ -313,6 +468,14 @@
    {
     "title": "Prochaine action : Aucune action rentable identifiée.",
     "priority": 1
+   }
+  ],
+  "automations": [
+   {
+    "name": "Analyse quotidienne",
+    "every_minutes": 1440,
+    "action_type": "analyse.lancer",
+    "params": {}
    }
   ]
  },
@@ -325,6 +488,7 @@
    "kind": "entreprise",
    "sector": "creatif",
    "modules": [
+    "automatisations",
     "studio"
    ]
   },
@@ -332,6 +496,14 @@
    {
     "title": "Prochaine action : Aucune action rentable identifiée dans ce cycle.",
     "priority": 1
+   }
+  ],
+  "automations": [
+   {
+    "name": "Analyse quotidienne",
+    "every_minutes": 1440,
+    "action_type": "analyse.lancer",
+    "params": {}
    }
   ]
  }

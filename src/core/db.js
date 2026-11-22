@@ -122,6 +122,9 @@ CREATE TABLE IF NOT EXISTS cinema_exports (
   id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL, project_id INTEGER NOT NULL, kind TEXT NOT NULL, format TEXT NOT NULL, file TEXT NOT NULL,
   seconds REAL NOT NULL DEFAULT 0, width INTEGER, height INTEGER, bytes INTEGER, stale INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS missions (
+  id INTEGER PRIMARY KEY, title TEXT NOT NULL, due_date TEXT, created_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_tasks_ws ON tasks(workspace_id, status);
 CREATE INDEX IF NOT EXISTS idx_tx_ws ON transactions(workspace_id, date);
 CREATE INDEX IF NOT EXISTS idx_actions_ws ON actions(workspace_id, status);
@@ -139,6 +142,8 @@ export function openDb(dbPath) {
   if (!hasColumn('transactions', 'external_id')) raw.exec('ALTER TABLE transactions ADD COLUMN external_id TEXT');
   // Espace central : au plus un par instance ; il coordonne les autres sans en copier les données.
   if (!hasColumn('workspaces', 'central')) raw.exec('ALTER TABLE workspaces ADD COLUMN central INTEGER NOT NULL DEFAULT 0');
+  // Mission : une même tâche confiée à plusieurs projets depuis l'espace central ; chaque tâche vit dans son espace.
+  if (!hasColumn('tasks', 'mission_id')) raw.exec('ALTER TABLE tasks ADD COLUMN mission_id INTEGER');
   // Mémoire partagée : un document est privé à son espace, sauf partage explicite avec l'espace central.
   if (!hasColumn('documents', 'shared')) raw.exec('ALTER TABLE documents ADD COLUMN shared INTEGER NOT NULL DEFAULT 0');
   return {
