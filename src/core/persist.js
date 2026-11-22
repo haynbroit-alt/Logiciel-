@@ -36,6 +36,12 @@ export function createPersistence({ kernel, config, log = console }) {
   // Au démarrage, avant l'amorçage. Retourne vrai si l'instance a été restaurée.
   async function restoreAtStart() {
     if (!state.configured) return false;
+    // GitHub répond 404 aussi bien pour un fichier absent que pour un dépôt que le jeton ne voit pas : le dépôt d'abord.
+    try {
+      const res = await fetch(`${api}/repos/${repo}`, { headers, signal: signal() });
+      if (res.status === 401) { block('jeton refusé par GitHub (expiré ou mal copié) : rien ne sera envoyé'); return false; }
+      if (!res.ok) { block(`dépôt « ${repo} » introuvable avec ce jeton (HTTP ${res.status}) : vérifier son nom exact et que le jeton y a accès, avec la permission Contents en lecture et écriture`); return false; }
+    } catch (e) { block(`GitHub injoignable au démarrage (${e.message}) : rien ne sera envoyé, pour ne pas écraser une sauvegarde`); return false; }
     let payload;
     try { payload = await load(); } catch (e) { block(`sauvegarde illisible au démarrage (${e.message}) : rien ne sera envoyé, pour ne pas l'écraser`); return false; }
     if (!payload) return false; // première mise en service : rien à restaurer
@@ -54,7 +60,9 @@ export function createPersistence({ kernel, config, log = console }) {
     const res = await fetch(url, { method: 'PUT', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: signal() });
     if (!res.ok) {
       if ([409, 422].includes(res.status)) block('la sauvegarde distante a changé ailleurs : envois suspendus, pour ne rien écraser');
-      else state.last_error = `GitHub a refusé la sauvegarde : HTTP ${res.status}`;
+      else state.last_error = res.status === 403 || res.status === 404
+        ? `GitHub a refusé l'écriture (HTTP ${res.status}) : le jeton n'a pas la permission Contents en écriture sur « ${repo} »`
+        : `GitHub a refusé la sauvegarde : HTTP ${res.status}`;
       throw new Error(state.last_error);
     }
     sha = (await res.json()).content.sha; lastHash = fingerprint();

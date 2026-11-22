@@ -913,6 +913,8 @@ async function fakeGithub() {
       const send = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(typeof body === 'string' ? body : JSON.stringify(body)); };
       if (req.headers.authorization !== 'Bearer jeton-test') return send(401, { message: 'Bad credentials' });
       const key = new URL(req.url, 'http://x').pathname; const f = files.get(key);
+      if (req.method === 'GET' && key === '/repos/moi/sauvegardes') return send(200, { full_name: 'moi/sauvegardes' });
+      if (!key.startsWith('/repos/moi/sauvegardes/')) return send(404, { message: 'Not Found' }); // dépôt que le jeton ne voit pas
       if (req.method === 'GET') {
         if (!f) return send(404, { message: 'Not Found' });
         if ((req.headers.accept ?? '').includes('raw')) { res.writeHead(200); return res.end(f.text); }
@@ -960,7 +962,12 @@ test('persistance GitHub : envoi chiffré, restauration au redémarrage, jamais 
 
     // Jeton refusé au démarrage : sauvegarde jugée illisible, envois suspendus.
     const e = instance(undefined, 'mauvais-jeton');
-    assert.equal(await e.p.restoreAtStart(), false); assert.match(e.p.status().blocked, /illisible/);
+    assert.equal(await e.p.restoreAtStart(), false); assert.match(e.p.status().blocked, /jeton refusé/);
+    // Dépôt mal nommé ou hors de portée du jeton : GitHub répond 404, ce n'est pas « aucune sauvegarde ».
+    const { k: kx, config: cx } = setup({ persistence: { repo: 'moi/autre', token: 'jeton-test', phrase: 'phrase de sauvegarde solide', api: gh.api } });
+    const x = createPersistence({ kernel: kx, config: cx, log: quiet });
+    assert.equal(await x.restoreAtStart(), false); assert.match(x.status().blocked, /introuvable avec ce jeton/);
+    seedWorkspaces(kx, seed); assert.equal(await x.push(true), false, 'rien n\'est tenté vers un dépôt inaccessible');
 
     // Deux instances sur la même sauvegarde : la seconde à écrire ne l'écrase pas.
     const f = instance(); assert.equal(await f.p.restoreAtStart(), true);
