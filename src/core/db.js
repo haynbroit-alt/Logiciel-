@@ -139,6 +139,8 @@ export function openDb(dbPath) {
   if (!hasColumn('transactions', 'external_id')) raw.exec('ALTER TABLE transactions ADD COLUMN external_id TEXT');
   // Espace central : au plus un par instance ; il coordonne les autres sans en copier les données.
   if (!hasColumn('workspaces', 'central')) raw.exec('ALTER TABLE workspaces ADD COLUMN central INTEGER NOT NULL DEFAULT 0');
+  // Mémoire partagée : un document est privé à son espace, sauf partage explicite avec l'espace central.
+  if (!hasColumn('documents', 'shared')) raw.exec('ALTER TABLE documents ADD COLUMN shared INTEGER NOT NULL DEFAULT 0');
   return {
     raw,
     all: (sql, ...p) => raw.prepare(sql).all(...p).map((r) => ({ ...r })),

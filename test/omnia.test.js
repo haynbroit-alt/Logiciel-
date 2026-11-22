@@ -789,3 +789,42 @@ test('coordination : lecture en direct des projets, limitée aux espaces auxquel
     assert.equal(seenByAdmin.espaces.length, 17);
   } finally { await new Promise((r) => server.close(r)); }
 });
+
+test('mémoire partagée : privée par défaut, partage explicite et révocable, droits respectés', async () => {
+  const { k, config } = setup();
+  seedWorkspaces(k, path.join(import.meta.dirname, '..', 'seed', 'velyx.json'));
+  const [central, alll, velyx] = k.listWorkspaces();
+  const secret = k.createDocument(alll.id, { title: 'Prix de revient', content: 'confidentiel Alll' });
+  const note = k.createDocument(alll.id, { title: 'Leçon', content: 'ce qui a marché' });
+  assert.deepEqual(k.sharedDocuments(central.id), [], 'rien n\'est partagé par défaut');
+  assert.throws(() => k.sharedDocuments(velyx.id), /Seul l'espace central/);
+  assert.throws(() => k.shareDocument(velyx.id, note.id, true), /introuvable/, 'on ne partage pas le document d\'un autre espace');
+  assert.throws(() => k.shareDocument(central.id, note.id, true), /lui appartient déjà/);
+  k.shareDocument(alll.id, note.id, true);
+  assert.deepEqual(k.sharedDocuments(central.id).map((x) => [x.title, x.espace]), [['Leçon', alll.name]]);
+  assert.equal(k.data(central.id).documents.length, 0, 'rien n\'est copié dans l\'espace central');
+  assert.equal(k.data(velyx.id).documents.length, 0, 'un autre projet ne reçoit rien');
+
+  // Par HTTP : Zoé n'a droit qu'à l'espace central ; Léo n'est que lecteur d'Alll.
+  k.auth.createUser({ name: 'Admin', email: 'admin@exemple.fr', password: 'motdepasse-solide-1' }, { admin: true });
+  const zoe = k.auth.createUser({ name: 'Zoé', email: 'zoe@exemple.fr', password: 'motdepasse-solide-2' });
+  const leo = k.auth.createUser({ name: 'Léo', email: 'leo@exemple.fr', password: 'motdepasse-solide-3' });
+  k.auth.setMember(central.id, { userId: zoe.id, role: 'lecteur' }); k.auth.setMember(alll.id, { userId: leo.id, role: 'lecteur' });
+  const server = createApp(config, k); await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`; const json = { 'content-type': 'application/json' };
+  const session = async (email, password) => (await fetch(`${base}/api/session`, { method: 'POST', headers: json, body: JSON.stringify({ email, password }) })).headers.get('set-cookie').split(';')[0];
+  try {
+    const zc = await session('zoe@exemple.fr', 'motdepasse-solide-2'); const lc = await session('leo@exemple.fr', 'motdepasse-solide-3');
+    const seen = await (await fetch(`${base}/api/espaces/${central.id}/partages`, { headers: { cookie: zc } })).json();
+    assert.deepEqual(seen.map((x) => x.title), ['Leçon']); assert.ok(!JSON.stringify(seen).includes('confidentiel'));
+    assert.equal((await fetch(`${base}/api/espaces/${alll.id}/donnees`, { headers: { cookie: zc } })).status, 404, 'le partage n\'ouvre pas l\'espace d\'origine');
+    const put = (cookie, id, partage) => fetch(`${base}/api/espaces/${alll.id}/documents/${id}/partage`, { method: 'PUT', headers: { ...json, cookie }, body: JSON.stringify({ partage }) });
+    assert.equal((await put(lc, secret.id, true)).status, 403, 'un lecteur ne partage pas');
+    assert.equal((await put(zc, secret.id, true)).status, 404);
+  } finally { await new Promise((r) => server.close(r)); }
+
+  k.shareDocument(alll.id, note.id, false);
+  assert.deepEqual(k.sharedDocuments(central.id), [], 'le partage se retire');
+  assert.deepEqual(k.audit.list(alll.id).filter((e) => e.event.startsWith('document.partage')).map((e) => e.event).reverse(), ['document.partage', 'document.partage_retire']);
+  assert.ok(!('shared' in k.exportWorkspace(alll.id).documents[0]), 'une sauvegarde d\'espace restaure des documents privés');
+});
