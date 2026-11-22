@@ -1,0 +1,325 @@
+[
+ {
+  "format": "omnia-espace",
+  "version": 1,
+  "workspace": {
+   "name": "Alll — Livret maison",
+   "description": "L'histoire de votre maison, livret personnalisé à 29 €. État : Chaîne commande, fabrication, envoi écrite et testée (2 289 lignes, 38 cas de test, 2 workflows). Site non mis en ligne, lien de paiement non configuré (A_REMPLACER), pages légales à compléter. 0 vente. Blocages : Actions réservées au propriétaire : rendre le dépôt privé, statut pour facturer (préalable commun avec Velyx), médiateur, boîte d'envoi, Cloudflare, Stripe, pages légales. Environ 2 heures selon docs/MISE-EN-ROUTE.md. Prochaine action : Décision datée : pour vendre avant le 20/12/2026 (critère d'arrêt du dépôt : moins de 30 commandes pour environ 1 000 visites), le statut doit être déposé dans les jours qui viennent, le numéro d'entreprise mettant environ deux semaines selon le dépôt. Puis session 1 de docs/MISE-EN-ROUTE.md, environ 1 heure.",
+   "kind": "entreprise",
+   "sector": "commerce",
+   "modules": [
+    "studio"
+   ]
+  },
+  "tasks": [
+   {
+    "title": "Prochaine action : Décision datée : pour vendre avant le 20/12/2026 (critère d'arrêt du dépôt : moins de 30 commandes pour environ 1 000 visites), le statut doit être déposé dans les jours qui viennent, le numéro d'entreprise mettant environ deux semaines selon le dépôt. Puis session 1 de…",
+    "priority": 1
+   }
+  ]
+ },
+ {
+  "format": "omnia-espace",
+  "version": 1,
+  "workspace": {
+   "name": "Velyx-prospection- — Prospection",
+   "description": "VELYX, fichiers de prospection fondés sur des signaux publics. État : Offre préparée : entreprises du bâtiment immatriculées récemment, pour des courtiers en assurance construction. État du dépôt au 16/11/2026 : 0 envoi, 0 € encaissé. Quatre gestes en attente, tous à faire par le propriétaire : statut pour facturer, ouverture d'un canal, publication du service, envoi de la première proposition (4 cabinets d'un département). Blocages : Statut pour facturer non confirmé : préalable commun avec Alll. Les brouillons privés du 16/11/2026 (fiche et message pour les 4 cabinets) ne sont ni dans le dépôt ni retrouvés ailleurs : à régénérer. Le registre public ne donne ni e-mail ni téléphone des cabinets : à trouver par le propriétaire. Aucun message ne part sans lui. Prochaine action : Propriétaire : déposer le statut (gratuit, 20 à 30 minutes selon docs/statut-micro-entreprise.md du dépôt). Agent, sur accord : régénérer la fiche des 4 cabinets et le brouillon de message. C'est le chemin le plus court vers un premier encaissement sans dépense préalable.",
+   "kind": "entreprise",
+   "sector": "services",
+   "modules": [
+    "studio"
+   ]
+  },
+  "tasks": [
+   {
+    "title": "Prochaine action : Propriétaire : déposer le statut (gratuit, 20 à 30 minutes selon docs/statut-micro-entreprise.md du dépôt). Agent, sur accord : régénérer la fiche des 4 cabinets et le brouillon de message. C'est le chemin le plus court vers un premier encaissement sans dépense préalable.",
+    "priority": 1
+   }
+  ]
+ },
+ {
+  "format": "omnia-espace",
+  "version": 1,
+  "workspace": {
+   "name": "Ref — OMNISEARCH",
+   "description": "NOVARYS OMNISEARCH, conformité des droits face aux IA. État : Moteur construit (3 509 lignes, 63 cas de test), études sur données réelles, dossier de pilote complet. Tous les messages sont des brouillons non envoyés. Pas de CI. 0 client. Blocages : Aucun contact pris : la validation par un client exige l'envoi des messages par le propriétaire. Cycle de vente long. Son paquet Python s'appelle aussi « novarys ». Prochaine action : Relire docs/pilote/MESSAGES.md et envoyer une première demande de pilote. Ajouter une CI, gratuite sur un dépôt public.",
+   "kind": "entreprise",
+   "sector": "tech",
+   "modules": [
+    "studio"
+   ]
+  },
+  "tasks": [
+   {
+    "title": "Prochaine action : Relire docs/pilote/MESSAGES.md et envoyer une première demande de pilote. Ajouter une CI, gratuite sur un dépôt public.",
+    "priority": 1
+   }
+  ]
+ },
+ {
+  "format": "omnia-espace",
+  "version": 1,
+  "workspace": {
+   "name": "Paie-juste — Paie",
+   "description": "Paie Juste, vérifier sa paie hors ligne. État : Application installable, hors ligne, sans compte, sous licence MIT. 8 349 lignes, 27 cas de test, 2 workflows. 4 PR de mises à jour de dépendances ouvertes. Blocages : Aucun modèle de revenu : l'application est gratuite et libre. Audience non mesurée. Prochaine action : Mesurer l'usage avant toute décision (compteur sans cookie). Sans audience mesurée, aucune action rentable identifiée.",
+   "kind": "entreprise",
+   "sector": "services",
+   "modules": [
+    "studio"
+   ]
+  },
+  "tasks": [
+   {
+    "title": "Prochaine action : Mesurer l'usage avant toute décision (compteur sans cookie). Sans audience mesurée, aucune action rentable identifiée.",
+    "priority": 1
+   }
+  ]
+ },
+ {
+  "format": "omnia-espace",
+  "version": 1,
+  "workspace": {
+   "name": "Clip-preuve — Preuve vidéo",
+   "description": "Clip-preuve, un clip vertical et sa carte de preuve. État : Outil local sous licence MIT : un lien vidéo donne un clip de 20 à 90 secondes et une carte de preuve. 4 761 lignes, 121 cas de test, 1 workflow. 1 PR de dépendances ouverte. Blocages : Outil en ligne de commande à installer. Ni offre, ni service hébergé, ni utilisateur connu. Prochaine action : Aucune action rentable sans test de demande. Piste à 0 € : proposer le service à la pièce, à la main, à quelques créateurs.",
+   "kind": "entreprise",
+   "sector": "tech",
+   "modules": [
+    "studio"
+   ]
+  },
+  "tasks": [
+   {
+    "title": "Prochaine action : Aucune action rentable sans test de demande. Piste à 0 € : proposer le service à la pièce, à la main, à quelques créateurs.",
+    "priority": 1
+   }
+  ]
+ },
+ {
+  "format": "omnia-espace",
+  "version": 1,
+  "workspace": {
+   "name": "Jeun — MULTIVERSE",
+   "description": "MULTIVERSE, plusieurs VOD d'un même événement sur une horloge commune. État : Outil en ligne. 935 lignes, 7 cas de test, 2 workflows. Blocages : Le test de 7 jours prévu par le dépôt ne peut pas être mesuré : le compteur de visites gratuit n'est pas activé, il faut un compte créé par le propriétaire. Pas de modèle de revenu. Prochaine action : Activer le compteur, puis lancer le test de 7 jours (seuil du dépôt : 30 visiteurs inconnus et 3 liens créés par d'autres).",
+   "kind": "entreprise",
+   "sector": "tech",
+   "modules": [
+    "studio"
+   ]
+  },
+  "tasks": [
+   {
+    "title": "Prochaine action : Activer le compteur, puis lancer le test de 7 jours (seuil du dépôt : 30 visiteurs inconnus et 3 liens créés par d'autres).",
+    "priority": 1
+   }
+  ]
+ },
+ {
+  "format": "omnia-espace",
+  "version": 1,
+  "workspace": {
+   "name": "Toon-o-Matic — Animation",
+   "description": "Toon-o-Matic, usine de web-série animée. État : Chaîne écriture, voix, animation, montage, revue humaine. 8 396 lignes, 70 cas de test, 1 workflow. Blocages : La production réelle demande une dépense, refusée tant que rien n'est encaissé. Les revenus de plateformes vidéo supposent des seuils d'audience. Prochaine action : Aucune à 0 € au-delà du mode simulé. À reprendre quand une enveloppe de dépense existera.",
+   "kind": "entreprise",
+   "sector": "creatif",
+   "modules": [
+    "studio"
+   ]
+  },
+  "tasks": [
+   {
+    "title": "Prochaine action : Aucune à 0 € au-delà du mode simulé. À reprendre quand une enveloppe de dépense existera.",
+    "priority": 1
+   }
+  ]
+ },
+ {
+  "format": "omnia-espace",
+  "version": 1,
+  "workspace": {
+   "name": "Hive — Agents",
+   "description": "HIVE, colonie d'agents sous contrôle humain. État : Agents coordonnés par traces sur un tableau commun. 7 106 lignes, 54 cas de test, pas de CI. Feuille de route du dépôt : jours 2 à 7 « à faire ». Blocages : Aucun modèle de langage branché (jour 2 de sa feuille de route). Pas d'offre. Prochaine action : Aucune action rentable directe. Décision à prendre : en faire la brique AGENTS du moteur, ou le geler.",
+   "kind": "entreprise",
+   "sector": "tech",
+   "modules": [
+    "studio"
+   ]
+  },
+  "tasks": [
+   {
+    "title": "Prochaine action : Aucune action rentable directe. Décision à prendre : en faire la brique AGENTS du moteur, ou le geler.",
+    "priority": 1
+   }
+  ]
+ },
+ {
+  "format": "omnia-espace",
+  "version": 1,
+  "workspace": {
+   "name": "Logiciel- — OMNIA",
+   "description": "OMNIA, un logiciel qui transforme les besoins d'une activité en constats, décisions et actions. État : Version 0.7, socle fonctionnel selon le dépôt : espaces cloisonnés, comptes avec rôles, tâches, finances avec import CSV, recommandations, exécution avec autorisations, journal d'audit, sauvegarde et restauration. 4 428 lignes de JavaScript et 32 cas de test, comptés à la main dans le cycle C-0006 (pas par l'observateur du moteur). 0 utilisateur connu, 0 vente. Blocages : Selon le dépôt : aucun connecteur OAuth, pas de double authentification ni de HTTPS intégré, base non chiffrée, modules externes sans bac à sable. Pas d'offre, pas de prix en vigueur, recoupe en partie le moteur SOVEREIGN (ADR 0001 : un seul moteur). Prochaine action : Aucune action rentable directe. Décision du propriétaire : en faire le tableau de bord du portail velyx.org, ou le geler au profit du moteur.",
+   "kind": "entreprise",
+   "sector": "tech",
+   "modules": [
+    "studio"
+   ]
+  },
+  "tasks": [
+   {
+    "title": "Prochaine action : Aucune action rentable directe. Décision du propriétaire : en faire le tableau de bord du portail velyx.org, ou le geler au profit du moteur.",
+    "priority": 1
+   }
+  ]
+ },
+ {
+  "format": "omnia-espace",
+  "version": 1,
+  "workspace": {
+   "name": "SOVEREIGN — Noyau",
+   "description": "Le moteur : noyau, registre financier, mémoire, validations humaines. État : Moteur de NOVARYS : base SQLite, règle des 10 %, mémoire des décisions, CLI, API REST, serveur MCP. 20 129 lignes, 239 cas de test relevés par l'observateur, 2 workflows. Aucune donnée d'entreprise chargée. Blocages : Le cycle quotidien n'exécute plus rien depuis le 18/11/2026 parce que le dépôt est public. Le défaut du registre financier (réécriture par INSERT OR REPLACE) est corrigé et fusionné. Prochaine action : Décider de la visibilité du dépôt pour relancer le cycle quotidien, puis y enregistrer le premier encaissement réel quand il existera.",
+   "kind": "entreprise",
+   "sector": "tech",
+   "modules": [
+    "studio"
+   ]
+  },
+  "tasks": [
+   {
+    "title": "Prochaine action : Décider de la visibilité du dépôt pour relancer le cycle quotidien, puis y enregistrer le premier encaissement réel quand il existera.",
+    "priority": 1
+   }
+  ]
+ },
+ {
+  "format": "omnia-espace",
+  "version": 1,
+  "workspace": {
+   "name": "NOVARYS — Registre",
+   "description": "Ce dépôt : charte, protocole de preuves Ω, registres. État : Outil de preuves, référentiel des capacités, registre des preuves et registre des actifs. 1 994 lignes, 33 cas de test relevés par l'observateur, 1 workflow. Créé le 21/11/2026. Blocages : Dépôt public : aucune donnée privée ne peut y être mémorisée. La CI n'écrit pas encore au registre (niveau VALIDÉ inatteignable). Prochaine action : Faire de la CI le second acteur du registre ; décider de la visibilité du dépôt.",
+   "kind": "entreprise",
+   "sector": "tech",
+   "modules": [
+    "studio"
+   ]
+  },
+  "tasks": [
+   {
+    "title": "Prochaine action : Faire de la CI le second acteur du registre ; décider de la visibilité du dépôt.",
+    "priority": 1
+   }
+  ]
+ },
+ {
+  "format": "omnia-espace",
+  "version": 1,
+  "workspace": {
+   "name": "Tr — Travail commun",
+   "description": "Page de travail commune de GALILÉE, CORTEX et LAVOISIER. État : Trois moteurs de recherche réunis autour d'un journal commun, avec leurs échecs publiés. 8 243 lignes, 53 cas de test, pas de CI. Recouvre à 90 % les dépôts 1, A et All selon l'observateur. Blocages : Recherche sans offre ni utilisateur. Quatre dépôts pour le même code. Prochaine action : Aucune action rentable identifiée. Garder Tr comme référence et archiver les trois copies réduirait la dispersion : décision du propriétaire.",
+   "kind": "entreprise",
+   "sector": "tech",
+   "modules": [
+    "studio"
+   ]
+  },
+  "tasks": [
+   {
+    "title": "Prochaine action : Aucune action rentable identifiée. Garder Tr comme référence et archiver les trois copies réduirait la dispersion : décision du propriétaire.",
+    "priority": 1
+   }
+  ]
+ },
+ {
+  "format": "omnia-espace",
+  "version": 1,
+  "workspace": {
+   "name": "1 — CORTEX",
+   "description": "CORTEX, boucle cognitive qui pilote une activité inconnue. État : 8 297 lignes, 34 cas de test, pas de CI. Repris dans Tr. Blocages : Recherche sur simulation. Pas d'offre. Prochaine action : Aucune. Voir Tr.",
+   "kind": "entreprise",
+   "sector": "tech",
+   "modules": [
+    "studio"
+   ]
+  },
+  "tasks": [
+   {
+    "title": "Prochaine action : Aucune. Voir Tr.",
+    "priority": 1
+   }
+  ]
+ },
+ {
+  "format": "omnia-espace",
+  "version": 1,
+  "workspace": {
+   "name": "All — Galilée",
+   "description": "Galilée, agent scientifique qui retrouve une loi cachée. État : 3 755 lignes, 29 cas de test, pas de CI. Repris dans Tr. Blocages : Recherche sur simulation. Pas d'offre. Prochaine action : Aucune. Voir Tr.",
+   "kind": "entreprise",
+   "sector": "tech",
+   "modules": [
+    "studio"
+   ]
+  },
+  "tasks": [
+   {
+    "title": "Prochaine action : Aucune. Voir Tr.",
+    "priority": 1
+   }
+  ]
+ },
+ {
+  "format": "omnia-espace",
+  "version": 1,
+  "workspace": {
+   "name": "A — LAVOISIER",
+   "description": "LAVOISIER, reconstruire les comptes d'une entreprise opaque. État : 2 408 lignes, 34 cas de test, pas de CI. Premier jalon en cours selon le dépôt. Repris dans Tr. Blocages : Recherche à son premier jalon. Pas d'offre. Prochaine action : Aucune. Voir Tr.",
+   "kind": "entreprise",
+   "sector": "tech",
+   "modules": [
+    "studio"
+   ]
+  },
+  "tasks": [
+   {
+    "title": "Prochaine action : Aucune. Voir Tr.",
+    "priority": 1
+   }
+  ]
+ },
+ {
+  "format": "omnia-espace",
+  "version": 1,
+  "workspace": {
+   "name": "MONDO — Stratégie",
+   "description": "MONDO, document de stratégie. État : Deux fichiers, aucun code. Nom de travail dont la disponibilité juridique n'est pas vérifiée, selon le dépôt. Blocages : Idée sans prototype. Prochaine action : Aucune action rentable identifiée.",
+   "kind": "entreprise",
+   "sector": "commerce",
+   "modules": [
+    "studio"
+   ]
+  },
+  "tasks": [
+   {
+    "title": "Prochaine action : Aucune action rentable identifiée.",
+    "priority": 1
+   }
+  ]
+ },
+ {
+  "format": "omnia-espace",
+  "version": 1,
+  "workspace": {
+   "name": "Artiste- — Musique",
+   "description": "Document fondateur d'un projet musical. État : Quatre fichiers, version 0.1. Rien n'est publié ni déposé, selon le dépôt. Blocages : Projet créatif à l'état de document. Prochaine action : Aucune action rentable identifiée dans ce cycle.",
+   "kind": "entreprise",
+   "sector": "creatif",
+   "modules": [
+    "studio"
+   ]
+  },
+  "tasks": [
+   {
+    "title": "Prochaine action : Aucune action rentable identifiée dans ce cycle.",
+    "priority": 1
+   }
+  ]
+ }
+]

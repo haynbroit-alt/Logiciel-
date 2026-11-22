@@ -15,6 +15,7 @@ export function loadConfig(overrides = {}) {
     port: Number(env.OMNIA_PORT ?? env.PORT ?? 4747), // PORT : fourni par l'hébergeur
     token: env.OMNIA_TOKEN ?? '',
     stripeKey: env.OMNIA_STRIPE_KEY ?? '',
+    seed: env.OMNIA_SEED ?? '', // fichier d'espaces à créer quand la base est vide
     cookieSecure: env.OMNIA_COOKIE_SECURE === '1',
     dataDir,
     dbPath: overrides.dbPath ?? env.OMNIA_DB ?? path.join(dataDir, 'omnia.db'),

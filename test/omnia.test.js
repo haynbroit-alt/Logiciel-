@@ -9,7 +9,7 @@ import { createKernel } from '../src/core/kernel.js';
 import { analyze as runRules } from '../src/engines/analysis.js';
 import { createRegistry } from '../src/core/registry.js';
 import { BUILTIN_MODULES } from '../src/modules/index.js';
-import { loadExternalModules } from '../src/server.js';
+import { loadExternalModules, seedWorkspaces } from '../src/server.js';
 import { decide, weightOf } from '../src/engines/decision.js';
 import { understandLocally } from '../src/engines/understanding.js';
 import { transactionsFromCsv, parseAmount, parseDate } from '../src/core/csv.js';
@@ -699,4 +699,15 @@ test('cinéma : tournage par briques interchangeables, coût par minute, montage
   const after = C.updateProject(w.id, p.id, { grade: 'chaud' });
   assert.equal(after.currentGate, 'montage'); await assert.rejects(R.assemble(w.id, p.id, 'final'), /doit être validé/);
   assert.ok(config.dataDir);
+});
+
+test('amorçage : les 17 espaces de VELYX sont créés sur une base vide, jamais sur une base peuplée', () => {
+  const { k } = setup();
+  const file = path.join(import.meta.dirname, '..', 'seed', 'velyx.json');
+  assert.equal(seedWorkspaces(k, ''), 0);
+  assert.equal(seedWorkspaces(k, file), 17);
+  const spaces = k.listWorkspaces();
+  assert.equal(spaces.length, 17); assert.ok(spaces.every((w) => w.modules.includes('studio') && w.description.includes('Prochaine action')));
+  assert.equal(k.data(spaces[0].id).tasks.length, 1);
+  assert.equal(seedWorkspaces(k, file), 0); assert.equal(k.listWorkspaces().length, 17);
 });
