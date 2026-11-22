@@ -264,6 +264,16 @@ export async function loadExternalModules(kernel, dir) {
   return loaded;
 }
 
+// Amorçage : sur une base sans aucun espace, crée ceux d'un fichier de sauvegardes OMNIA (un tableau).
+// Sert aux hébergements dont le disque ne survit pas à un redémarrage ; ne touche jamais une base déjà peuplée.
+export function seedWorkspaces(kernel, file) {
+  if (!file || kernel.listWorkspaces().length) return 0;
+  const payloads = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!Array.isArray(payloads)) throw new Error('Fichier d\'amorçage invalide : un tableau de sauvegardes est attendu');
+  for (const payload of payloads) kernel.importWorkspace(payload);
+  return payloads.length;
+}
+
 export async function start(overrides = {}) {
   const config = loadConfig(overrides);
   const db = openDb(config.dbPath);
@@ -273,6 +283,8 @@ export async function start(overrides = {}) {
     throw new Error('Refus de démarrer : OMNIA_HOST expose le serveur au réseau sans protection. Définissez OMNIA_TOKEN, ou créez d\'abord un compte en accès local.');
   }
   const external = await loadExternalModules(kernel, config.modulesDir);
+  const seeded = seedWorkspaces(kernel, config.seed);
+  if (seeded) console.log(`[omnia] amorçage : ${seeded} espace(s) créé(s) depuis ${config.seed}`);
   const server = createApp(config, kernel);
   let busy = false;
   const timer = setInterval(async () => {
