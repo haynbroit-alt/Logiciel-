@@ -104,7 +104,9 @@ const ROUTES = [
   ['POST', '/api/instance/sauvegarde', (k, p, b) => k.backup.seal(b.phrase), 'admin'],
   ['POST', '/api/instance/restauration', (k, p, b) => k.backup.restore(b.sauvegarde, b.phrase), 'admin'],
   ['GET', '/api/meta', (k) => ({ ...k.meta(), persistance: k.persistence?.status() ?? { configured: false } })],
-  ['POST', '/api/instance/persistance', async (k) => ({ envoyee: await k.persistence?.push(true) ?? false, ...k.persistence?.status() }), 'admin'],
+  ['POST', '/api/instance/persistance', async (k) => {
+    try { return { envoyee: await k.persistence?.push(true) ?? false, ...k.persistence?.status() }; } catch (e) { throw new OmniaError(e.message, 502); }
+  }, 'admin'],
   ['GET', '/api/noyau', (k) => k.describe()],
   ['GET', '/api/espaces', (k, p, b, c) => {
     const all = k.listWorkspaces();
