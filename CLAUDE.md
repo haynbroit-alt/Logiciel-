@@ -24,6 +24,6 @@
 - Ne jamais lire `data/` ni `node_modules/`. `src/core/kernel.js` et `public/app.js` sont longs : y chercher.
 - Code minimal : le plus petit diff qui résout le problème ; pas d'abstraction, d'option ni de fichier « au cas où ».
 - Carte : `src/server.js` (routes HTTP), `src/config.js` (environnement), `src/core/` (`kernel`, `auth`, `audit`,
-  `backup` : sauvegarde chiffrée de l'instance, `db`, `registry`, `events`), `src/connectors/` (`hub` : canaux, jetons, import Stripe ; `index` : exports,
+  `backup` : sauvegarde chiffrée de l'instance, `persist` : envoi vers un dépôt GitHub privé et restauration au démarrage, `db`, `registry`, `events`), `src/connectors/` (`hub` : canaux, jetons, import Stripe ; `index` : exports,
   brouillons, webhooks), `src/engines/` (compréhension, analyse, décision, exécution), `src/modules/` (gestion,
   finances, studio), `src/ai/` (fournisseurs), `public/` (interface), `test/`, `docs/API.md`.

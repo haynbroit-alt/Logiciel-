@@ -22,5 +22,12 @@ services:
         value: seed/velyx.json # l'espace central et les 17 espaces de projets, recréés tant que la base est vide
       - key: OMNIA_TOKEN
         generateValue: true
+      # Persistance : dépôt GitHub privé « propriétaire/nom », jeton limité au contenu de ce seul dépôt, phrase de chiffrement.
+      - key: OMNIA_BACKUP_REPO
+        sync: false
+      - key: OMNIA_BACKUP_TOKEN
+        sync: false
+      - key: OMNIA_BACKUP_PHRASE
+        sync: false
       - key: OMNIA_STRIPE_KEY
         sync: false # clé Stripe restreinte en lecture, saisie par le propriétaire dans Render

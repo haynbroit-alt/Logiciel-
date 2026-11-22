@@ -17,6 +17,11 @@ export function loadConfig(overrides = {}) {
     token: env.OMNIA_TOKEN ?? '',
     stripeKey: env.OMNIA_STRIPE_KEY ?? '',
     seed: env.OMNIA_SEED ?? '', // fichier d'espaces à créer quand la base est vide
+    // Sauvegarde chiffrée poussée dans un dépôt GitHub privé (jeton limité à ce dépôt) et restaurée au démarrage.
+    persistence: {
+      repo: env.OMNIA_BACKUP_REPO ?? '', token: env.OMNIA_BACKUP_TOKEN ?? '', phrase: env.OMNIA_BACKUP_PHRASE ?? '',
+      path: env.OMNIA_BACKUP_PATH || undefined, api: env.OMNIA_BACKUP_API || undefined, minutes: Number(env.OMNIA_BACKUP_MINUTES ?? 5),
+    },
     cookieSecure: env.OMNIA_COOKIE_SECURE === '1',
     dataDir,
     dbPath: overrides.dbPath ?? env.OMNIA_DB ?? path.join(dataDir, 'omnia.db'),
