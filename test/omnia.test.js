@@ -10,6 +10,9 @@ import { analyze as runRules } from '../src/engines/analysis.js';
 import { createRegistry } from '../src/core/registry.js';
 import { BUILTIN_MODULES } from '../src/modules/index.js';
 import { loadExternalModules, seedWorkspaces } from '../src/server.js';
+import { createPersistence } from '../src/core/persist.js';
+import http from 'node:http';
+import crypto from 'node:crypto';
 import { decide, weightOf } from '../src/engines/decision.js';
 import { understandLocally } from '../src/engines/understanding.js';
 import { transactionsFromCsv, parseAmount, parseDate } from '../src/core/csv.js';
@@ -899,4 +902,75 @@ test('sauvegarde d\'instance : le travail du système seul n\'empêche pas de re
     assert.equal(ok.status, 200); assert.equal(other.k.data(other.k.listWorkspaces()[1].id).transactions[0].amount, 29);
     assert.equal(other.k.backup.pristine(), false, 'une fois restaurée, l\'instance porte du travail');
   } finally { await new Promise((r) => server2.close(r)); }
+});
+
+// Un faux GitHub, fidèle à l'API « contents » : lecture (JSON ou brute), écriture conditionnée par l'empreinte.
+async function fakeGithub() {
+  const files = new Map(); const stats = { puts: 0 };
+  const server = http.createServer((req, res) => {
+    let raw = ''; req.on('data', (c) => { raw += c; });
+    req.on('end', () => {
+      const send = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(typeof body === 'string' ? body : JSON.stringify(body)); };
+      if (req.headers.authorization !== 'Bearer jeton-test') return send(401, { message: 'Bad credentials' });
+      const key = new URL(req.url, 'http://x').pathname; const f = files.get(key);
+      if (req.method === 'GET') {
+        if (!f) return send(404, { message: 'Not Found' });
+        if ((req.headers.accept ?? '').includes('raw')) { res.writeHead(200); return res.end(f.text); }
+        return send(200, { sha: f.sha, content: '' }); // gros fichier : contenu à demander à part, comme GitHub
+      }
+      const body = JSON.parse(raw);
+      if ((f?.sha) !== body.sha) return send(409, { message: 'sha does not match' });
+      const text = Buffer.from(body.content, 'base64').toString('utf8'); const sha = crypto.createHash('sha1').update(text).digest('hex');
+      files.set(key, { sha, text }); stats.puts += 1;
+      return send(f ? 200 : 201, { content: { sha } });
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  return { files, stats, api: `http://127.0.0.1:${server.address().port}`, close: () => new Promise((r) => server.close(r)) };
+}
+
+test('persistance GitHub : envoi chiffré, restauration au redémarrage, jamais d\'écrasement d\'une sauvegarde illisible ou changée ailleurs', async () => {
+  const gh = await fakeGithub(); const seed = path.join(import.meta.dirname, '..', 'seed', 'velyx.json');
+  const quiet = { log() {}, error() {} };
+  const instance = (phrase = 'phrase de sauvegarde solide', token = 'jeton-test') => {
+    const { k, config } = setup({ persistence: { repo: 'moi/sauvegardes', token, phrase, api: gh.api } });
+    return { k, p: createPersistence({ kernel: k, config, log: quiet }) };
+  };
+  try {
+    // Première mise en service : rien à restaurer ; amorçage ; un encaissement ; envoi.
+    const a = instance();
+    assert.equal(await a.p.restoreAtStart(), false); seedWorkspaces(a.k, seed);
+    const [, alll] = a.k.listWorkspaces(); a.k.createTransaction(alll.id, { date: d(0), amount: 29, label: 'Vente' });
+    assert.equal(await a.p.push(), true); assert.equal(gh.stats.puts, 1);
+    assert.equal(await a.p.push(), false, 'rien de neuf : rien n\'est envoyé'); assert.equal(gh.stats.puts, 1);
+    const stored = [...gh.files.values()][0].text;
+    assert.ok(!stored.includes('Vente') && JSON.parse(stored).cipher === 'aes-256-gcm', 'le dépôt ne reçoit que du chiffré');
+
+    // Redémarrage sur un disque effacé : la base est restaurée avant l'amorçage, qui n'a plus rien à faire.
+    const b = instance();
+    assert.equal(await b.p.restoreAtStart(), true); assert.equal(seedWorkspaces(b.k, seed), 0);
+    assert.equal(b.k.listWorkspaces().length, 18); assert.equal(b.k.data(alll.id).transactions[0].amount, 29);
+    assert.ok(b.p.status().restored_from); assert.equal(b.k.audit.verify().ok, true);
+    b.k.createTask(alll.id, { title: 'Après redémarrage' }); assert.equal(await b.p.push(), true);
+
+    // Mauvaise phrase : rien n'est restauré, et surtout rien n'est envoyé par-dessus.
+    const c = instance('une tout autre phrase secrète');
+    assert.equal(await c.p.restoreAtStart(), false); assert.match(c.p.status().blocked, /restauration impossible/);
+    seedWorkspaces(c.k, seed); assert.equal(await c.p.push(true), false); assert.equal(gh.stats.puts, 2);
+
+    // Jeton refusé au démarrage : sauvegarde jugée illisible, envois suspendus.
+    const e = instance(undefined, 'mauvais-jeton');
+    assert.equal(await e.p.restoreAtStart(), false); assert.match(e.p.status().blocked, /illisible/);
+
+    // Deux instances sur la même sauvegarde : la seconde à écrire ne l'écrase pas.
+    const f = instance(); assert.equal(await f.p.restoreAtStart(), true);
+    b.k.createTask(alll.id, { title: 'Encore' }); assert.equal(await b.p.push(), true);
+    f.k.createTask(alll.id, { title: 'Ailleurs' });
+    await assert.rejects(f.p.push(), /suspendus/); assert.match(f.p.status().blocked, /changé ailleurs/);
+
+    // Fichier altéré dans le dépôt : refusé à la restauration.
+    const [key, file] = [...gh.files.entries()][0]; const bad = JSON.parse(file.text); bad.sha256 = '0'.repeat(64);
+    gh.files.set(key, { ...file, text: JSON.stringify(bad) });
+    const g = instance(); assert.equal(await g.p.restoreAtStart(), false); assert.match(g.p.status().blocked, /altéré/);
+  } finally { await gh.close(); }
 });

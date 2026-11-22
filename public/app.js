@@ -639,6 +639,9 @@ const views = {
     const w = state.workspace; const ai = state.meta.ai;
     return page('Réglages', 'Profil de l\'activité, modules, autonomie et confidentialité.', null,
       h('div', { class: 'card stack' }, h('h2', {}, 'Sauvegarde de toute l\'instance'),
+        ((pe) => h('p', { class: pe.blocked ? 'notice' : 'small' }, !pe.configured ? 'Sauvegarde automatique : non configurée. Elle se règle chez l\'hébergeur (OMNIA_BACKUP_REPO, OMNIA_BACKUP_TOKEN, OMNIA_BACKUP_PHRASE).'
+          : pe.blocked ? `Sauvegarde automatique suspendue : ${pe.blocked}`
+          : `Sauvegarde automatique vers ${pe.depot} : ${pe.last_push ? `dernière le ${fdatetime(pe.last_push)}` : 'aucune encore'}${pe.restored_from ? ` · instance restaurée au démarrage depuis la sauvegarde du ${fdatetime(pe.restored_from)}` : ''}.`))(state.meta.persistance ?? {}),
         h('p', { class: 'muted small' }, 'Un fichier chiffré par votre phrase secrète (12 caractères au moins) : tous les espaces, les comptes, les droits et le journal. Sans la phrase, il est illisible ; elle n\'est enregistrée nulle part.'),
         h('form', { class: 'inline', onsubmit: act(async (ev) => download(`omnia-instance-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(await api('POST', '/instance/sauvegarde', { phrase: formData(ev.target).phrase }))), 'Sauvegarde téléchargée') },
           h('label', {}, 'Phrase secrète', h('input', { name: 'phrase', type: 'password', required: true, minLength: 12, autocomplete: 'new-password' })), h('button', { class: 'primary' }, 'Télécharger la sauvegarde')),

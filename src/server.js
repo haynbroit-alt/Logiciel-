@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Serveur HTTP d'OMNIA Ω : API JSON + tableau de bord. Aucune dépendance externe.
+import { createPersistence } from './core/persist.js';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -102,7 +103,8 @@ const ROUTES = [
   // Sauvegarde de toute l'instance : réservée aux administrateurs (ou au détenteur du jeton, sans comptes).
   ['POST', '/api/instance/sauvegarde', (k, p, b) => k.backup.seal(b.phrase), 'admin'],
   ['POST', '/api/instance/restauration', (k, p, b) => k.backup.restore(b.sauvegarde, b.phrase), 'admin'],
-  ['GET', '/api/meta', (k) => k.meta()],
+  ['GET', '/api/meta', (k) => ({ ...k.meta(), persistance: k.persistence?.status() ?? { configured: false } })],
+  ['POST', '/api/instance/persistance', async (k) => ({ envoyee: await k.persistence?.push(true) ?? false, ...k.persistence?.status() }), 'admin'],
   ['GET', '/api/noyau', (k) => k.describe()],
   ['GET', '/api/espaces', (k, p, b, c) => {
     const all = k.listWorkspaces();
@@ -301,6 +303,10 @@ export async function start(overrides = {}) {
     throw new Error('Refus de démarrer : OMNIA_HOST expose le serveur au réseau sans protection. Définissez OMNIA_TOKEN, ou créez d\'abord un compte en accès local.');
   }
   const external = await loadExternalModules(kernel, config.modulesDir);
+  // La persistance passe avant l'amorçage : une instance restaurée n'a pas à être amorcée.
+  kernel.persistence = createPersistence({ kernel, config });
+  await kernel.persistence.restoreAtStart();
+  const saver = kernel.persistence.schedule();
   const seeded = seedWorkspaces(kernel, config.seed);
   if (seeded) console.log(`[omnia] amorçage : ${seeded} espace(s) créé(s) depuis ${config.seed}`);
   const server = createApp(config, kernel);
@@ -310,7 +316,7 @@ export async function start(overrides = {}) {
     try { await kernel.tick(); } catch (e) { console.error('[omnia] ordonnanceur :', e.message); } finally { busy = false; }
   }, config.schedulerSeconds * 1000);
   timer.unref();
-  server.on('close', () => { clearInterval(timer); db.close(); });
+  server.on('close', () => { clearInterval(timer); if (saver) clearInterval(saver); db.close(); });
   return new Promise((resolve) => server.listen(config.port, config.host, () => resolve({ server, kernel, config, external, port: server.address().port })));
 }
 
@@ -319,5 +325,7 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import
     if (external.length) console.log(`Modules externes chargés : ${external.join(', ')}`);
     console.log(`OMNIA Ω — http://${isLoopback(config.host) ? 'localhost' : config.host}:${port}`);
     console.log(`IA : ${kernel.ai.generative ? `${kernel.ai.provider} (${kernel.ai.model})` : 'mode local, sans IA générative'} · données : ${config.dbPath}`);
+    // Arrêt demandé par l'hébergeur : dernier envoi avant de partir.
+    process.once('SIGTERM', () => kernel.persistence.push().catch((e) => console.error(`[omnia] persistance : ${e.message}`)).finally(() => process.exit(0)));
   }).catch((e) => { console.error(e.message); process.exit(1); });
 }
