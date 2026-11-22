@@ -3,6 +3,19 @@
   "format": "omnia-espace",
   "version": 1,
   "workspace": {
+   "name": "VELYX — Espace central",
+   "central": true,
+   "description": "Espace central de l'écosystème. Il coordonne les 17 projets sans en copier les données : chaque projet garde son espace, ses données et ses droits. Stripe est rattaché à cet espace seul.",
+   "kind": "entreprise",
+   "sector": "general",
+   "modules": []
+  },
+  "tasks": []
+ },
+ {
+  "format": "omnia-espace",
+  "version": 1,
+  "workspace": {
    "name": "Alll — Livret maison",
    "description": "L'histoire de votre maison, livret personnalisé à 29 €. État : Chaîne commande, fabrication, envoi écrite et testée (2 289 lignes, 38 cas de test, 2 workflows). Site non mis en ligne, lien de paiement non configuré (A_REMPLACER), pages légales à compléter. 0 vente. Blocages : Actions réservées au propriétaire : rendre le dépôt privé, statut pour facturer (préalable commun avec Velyx), médiateur, boîte d'envoi, Cloudflare, Stripe, pages légales. Environ 2 heures selon docs/MISE-EN-ROUTE.md. Prochaine action : Décision datée : pour vendre avant le 20/12/2026 (critère d'arrêt du dépôt : moins de 30 commandes pour environ 1 000 visites), le statut doit être déposé dans les jours qui viennent, le numéro d'entreprise mettant environ deux semaines selon le dépôt. Puis session 1 de docs/MISE-EN-ROUTE.md, environ 1 heure.",
    "kind": "entreprise",

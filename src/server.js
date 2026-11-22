@@ -97,6 +97,9 @@ const ROUTES = [
   ['POST', '/api/espaces/:ws/cinema/projets/:id/tourner', (k, p) => k.renderer.shoot(cinemaWs(k, p), p.id)],
   ['POST', '/api/espaces/:ws/cinema/projets/:id/assembler', (k, p, b) => k.renderer.assemble(cinemaWs(k, p), p.id, b.type)],
   ['GET', '/api/espaces/:ws/cinema/projets/:id/exports/:sid/fichier', (k, p) => ({ __file: k.renderer.exportFile(cinemaWs(k, p), p.id, p.sid) })],
+  // Sauvegarde de toute l'instance : réservée aux administrateurs (ou au détenteur du jeton, sans comptes).
+  ['POST', '/api/instance/sauvegarde', (k, p, b) => k.backup.seal(b.phrase), 'admin'],
+  ['POST', '/api/instance/restauration', (k, p, b) => k.backup.restore(b.sauvegarde, b.phrase), 'admin'],
   ['GET', '/api/meta', (k) => k.meta()],
   ['GET', '/api/noyau', (k) => k.describe()],
   ['GET', '/api/espaces', (k, p, b, c) => {
@@ -271,6 +274,7 @@ export function seedWorkspaces(kernel, file) {
   const payloads = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (!Array.isArray(payloads)) throw new Error('Fichier d\'amorçage invalide : un tableau de sauvegardes est attendu');
   for (const payload of payloads) kernel.importWorkspace(payload);
+  kernel.backup.markSeeded(payloads.length); // tant que rien d'autre n'arrive, l'instance reste restaurable
   return payloads.length;
 }
 

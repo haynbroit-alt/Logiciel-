@@ -701,13 +701,61 @@ test('cinéma : tournage par briques interchangeables, coût par minute, montage
   assert.ok(config.dataDir);
 });
 
-test('amorçage : les 17 espaces de VELYX sont créés sur une base vide, jamais sur une base peuplée', () => {
+test('amorçage : l\'espace central puis les 17 espaces de projets, sur une base vide seulement', () => {
   const { k } = setup();
   const file = path.join(import.meta.dirname, '..', 'seed', 'velyx.json');
   assert.equal(seedWorkspaces(k, ''), 0);
-  assert.equal(seedWorkspaces(k, file), 17);
+  assert.equal(seedWorkspaces(k, file), 18);
   const spaces = k.listWorkspaces();
-  assert.equal(spaces.length, 17); assert.ok(spaces.every((w) => w.modules.includes('studio') && w.description.includes('Prochaine action')));
-  assert.equal(k.data(spaces[0].id).tasks.length, 1);
-  assert.equal(seedWorkspaces(k, file), 0); assert.equal(k.listWorkspaces().length, 17);
+  assert.equal(spaces.length, 18); assert.equal(spaces[0].name, 'VELYX — Espace central');
+  assert.deepEqual(spaces.map((w) => w.central), [true, ...Array(17).fill(false)], 'un seul espace central, distinct des projets');
+  assert.ok(spaces.slice(1).every((w) => w.modules.includes('studio') && w.description.includes('Prochaine action')));
+  assert.equal(k.data(spaces[1].id).tasks.length, 1);
+  assert.equal(seedWorkspaces(k, file), 0); assert.equal(k.listWorkspaces().length, 18);
+});
+
+test('Stripe : avec un espace central, lui seul peut importer', async () => {
+  const { k } = setup({ stripeKey: 'rk_test_x' });
+  seedWorkspaces(k, path.join(import.meta.dirname, '..', 'seed', 'velyx.json'));
+  const [central, alll] = k.listWorkspaces();
+  const run = (ws) => k.execution.request(ws, { type: 'stripe.importer', params: { days: 30 } });
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ data: [], has_more: false });
+  try {
+    const refused = await run(alll);
+    assert.notEqual(refused.status, 'reussie'); assert.match(JSON.stringify(refused), /espace central/);
+    assert.equal((await run(central)).status, 'reussie');
+  } finally { globalThis.fetch = original; }
+});
+
+test('sauvegarde d\'instance : chiffrée, scellée, restaurée à l\'identique ; altération, mauvaise phrase et écrasement refusés', async () => {
+  const phrase = 'une phrase secrète assez longue';
+  const { k } = setup();
+  seedWorkspaces(k, path.join(import.meta.dirname, '..', 'seed', 'velyx.json'));
+  k.auth.createUser({ name: 'Ana', email: 'ana@exemple.fr', password: 'motdepasse-solide-1' }, { admin: true });
+  const [central, alll] = k.listWorkspaces();
+  k.createTransaction(alll.id, { date: d(0), amount: 29, label: 'Vente' });
+  k.createDocument(central.id, { title: 'Note', content: 'privée' });
+  assert.throws(() => k.backup.seal('court'), /12 caractères/);
+  const file = JSON.parse(JSON.stringify(k.backup.seal(phrase)));
+  const original = k.backup.dump();
+  assert.ok(!JSON.stringify(file).includes('ana@exemple.fr') && !JSON.stringify(file).includes('Vente'), 'rien de lisible sans la phrase');
+
+  // Panne simulée : une instance neuve, tout juste amorcée, reçoit la sauvegarde.
+  const fresh = setup().k;
+  seedWorkspaces(fresh, path.join(import.meta.dirname, '..', 'seed', 'velyx.json'));
+  assert.throws(() => fresh.backup.restore(file, 'mauvaise phrase secrète'), /incorrecte ou fichier altéré/);
+  assert.throws(() => fresh.backup.restore({ ...file, data: `${file.data.slice(0, 40)}AAAA${file.data.slice(44)}` }, phrase), /incorrecte ou fichier altéré/);
+  assert.throws(() => fresh.backup.restore({ ...file, format: 'autre' }, phrase), /sauvegarde d'instance/);
+  assert.equal(fresh.listWorkspaces().length, 18, 'un refus ne change rien');
+  const out = fresh.backup.restore(file, phrase);
+  assert.equal(out.espaces, 18);
+  const restored = fresh.backup.dump();
+  restored.audit_log = restored.audit_log.slice(0, original.audit_log.length); // la restauration ajoute sa propre ligne
+  assert.deepEqual(restored, original, 'toutes les tables sont identiques');
+  assert.equal(fresh.audit.verify().ok, true); assert.equal(fresh.auth.enabled(), true);
+  assert.equal(fresh.data(alll.id).transactions[0].amount, 29);
+  // Une instance qui porte du travail n'est jamais écrasée.
+  assert.throws(() => fresh.backup.restore(file, phrase), /contient déjà du travail/);
+  assert.throws(() => k.backup.restore(file, phrase), /contient déjà du travail/);
 });
