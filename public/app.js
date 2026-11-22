@@ -617,6 +617,13 @@ const views = {
   async reglages() {
     const w = state.workspace; const ai = state.meta.ai;
     return page('Réglages', 'Profil de l\'activité, modules, autonomie et confidentialité.', null,
+      h('div', { class: 'card stack' }, h('h2', {}, 'Sauvegarde de toute l\'instance'),
+        h('p', { class: 'muted small' }, 'Un fichier chiffré par votre phrase secrète (12 caractères au moins) : tous les espaces, les comptes, les droits et le journal. Sans la phrase, il est illisible ; elle n\'est enregistrée nulle part.'),
+        h('form', { class: 'inline', onsubmit: act(async (ev) => download(`omnia-instance-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(await api('POST', '/instance/sauvegarde', { phrase: formData(ev.target).phrase }))), 'Sauvegarde téléchargée') },
+          h('label', {}, 'Phrase secrète', h('input', { name: 'phrase', type: 'password', required: true, minLength: 12, autocomplete: 'new-password' })), h('button', { class: 'primary' }, 'Télécharger la sauvegarde')),
+        h('form', { class: 'inline', onsubmit: act(async (ev) => { const file = ev.target.querySelector('input[type=file]').files[0]; if (!file) throw new Error('Choisissez un fichier de sauvegarde'); await api('POST', '/instance/restauration', { phrase: formData(ev.target).phrase, sauvegarde: JSON.parse(await file.text()) }); window.location.reload(); }) },
+          h('label', {}, 'Fichier de sauvegarde', h('input', { type: 'file', accept: 'application/json', required: true })), h('label', {}, 'Phrase secrète', h('input', { name: 'phrase', type: 'password', required: true })), h('button', {}, 'Restaurer')),
+        h('p', { class: 'muted small' }, 'La restauration n\'est acceptée que sur une instance vide ou tout juste amorcée : elle n\'écrase jamais un travail en cours.')),
       h('div', { class: 'grid cols-2' },
         h('form', { class: 'card stack', onsubmit: act((ev) => { const f = formData(ev.target); return api('PATCH', ws(), { ...f, goals: f.goals.split('\n') }); }, 'Profil enregistré') },
           h('h2', {}, 'Profil de l\'activité'),

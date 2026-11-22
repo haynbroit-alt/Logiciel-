@@ -137,6 +137,8 @@ export function openDb(dbPath) {
   if (!hasColumn('automations', 'trigger_event')) raw.exec('ALTER TABLE automations ADD COLUMN trigger_event TEXT');
   if (!hasColumn('transactions', 'studio_project_id')) raw.exec('ALTER TABLE transactions ADD COLUMN studio_project_id INTEGER');
   if (!hasColumn('transactions', 'external_id')) raw.exec('ALTER TABLE transactions ADD COLUMN external_id TEXT');
+  // Espace central : au plus un par instance ; il coordonne les autres sans en copier les données.
+  if (!hasColumn('workspaces', 'central')) raw.exec('ALTER TABLE workspaces ADD COLUMN central INTEGER NOT NULL DEFAULT 0');
   return {
     raw,
     all: (sql, ...p) => raw.prepare(sql).all(...p).map((r) => ({ ...r })),

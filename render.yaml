@@ -19,7 +19,7 @@ services:
       - key: OMNIA_COOKIE_SECURE
         value: "1"
       - key: OMNIA_SEED
-        value: seed/velyx.json # les 17 espaces de projets, recréés tant que la base est vide
+        value: seed/velyx.json # l'espace central et les 17 espaces de projets, recréés tant que la base est vide
       - key: OMNIA_TOKEN
         generateValue: true
       - key: OMNIA_STRIPE_KEY

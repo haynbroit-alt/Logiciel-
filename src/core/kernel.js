@@ -1,5 +1,6 @@
 // Noyau central d'OMNIA Ω. Il relie mémoire, moteurs et connecteurs et porte le cycle :
 // comprendre → analyser → décider → agir (avec autorisation) → mesurer → apprendre.
+import { createBackup } from './backup.js';
 import { now, today, parseJson } from './db.js';
 import { createAudit } from './audit.js';
 import { createAuth } from './auth.js';
@@ -38,7 +39,7 @@ export function createKernel({ db, ai, config }) {
   const events = createEvents();
 
   // ---------- Espaces ----------
-  const wsRow = (w) => w && ({ ...w, goals: parseJson(w.goals, []), modules: parseJson(w.modules, []) });
+  const wsRow = (w) => w && ({ ...w, central: Boolean(w.central), goals: parseJson(w.goals, []), modules: parseJson(w.modules, []) });
   const workspace = (id) => {
     const w = wsRow(db.get('SELECT * FROM workspaces WHERE id = ?', Number(id)));
     need(w, 'Espace introuvable', 404);
@@ -342,7 +343,12 @@ export function createKernel({ db, ai, config }) {
         }
         return hub.sendToChannel(wsId, { channelId: p.channelId, text, extra });
       },
-      importStripe: (wsId, days) => hub.importStripe(workspace(wsId), days),
+      // Un seul compte Stripe : s'il existe un espace central, lui seul importe, pour ne compter chaque encaissement qu'une fois.
+      importStripe(wsId, days) {
+        const w = workspace(wsId);
+        need(w.central || !db.get('SELECT id FROM workspaces WHERE central = 1'), 'Stripe est rattaché à l\'espace central : l\'import se fait depuis lui seul', 403);
+        return hub.importStripe(w, days);
+      },
       studioSpend(wsId, p) { need(workspace(wsId).modules.includes('studio'), 'Le module Studio n\'est pas activé pour cet espace'); return studio.spend(wsId, p); },
       postWebhook(wsId, p) {
         const w = workspace(wsId);
@@ -356,6 +362,7 @@ export function createKernel({ db, ai, config }) {
   const hub = createHub({ db, audit, config, fail: (m, s) => { throw new OmniaError(m, s); }, services: { createTask, createTransaction, createDocument } });
 
   const studio = createStudio({ db, audit, fail: (m, s) => { throw new OmniaError(m, s); }, services: { createTransaction } });
+  const backup = createBackup({ db, audit, now, fail: (m, s) => { throw new OmniaError(m, s); } });
   const cinema = createCinema({ db, audit, ai, fail: (m, s) => { throw new OmniaError(m, s); } });
   const renderer = createRenderer({ db, audit, config, cinema, fail: (m, s) => { throw new OmniaError(m, s); } });
   // Document du studio : le brief ne contient que ce qui a été saisi sur le projet.
@@ -499,6 +506,8 @@ export function createKernel({ db, ai, config }) {
         name, text(src.description, 5000), KINDS.includes(src.kind) ? src.kind : 'entreprise', SECTORS.includes(src.sector) ? src.sector : 'general',
         JSON.stringify(list(src.goals).map((g) => text(g, 200)).filter(Boolean).slice(0, 10)), JSON.stringify(registry.sanitize(src.modules)),
         src.autonomy === 'manuel' ? 'manuel' : 'assiste', text(src.currency, 8) || 'EUR', 'import', now());
+      // Une sauvegarde d'espace central ne le reste que si l'instance n'en a pas déjà un.
+      if (src.central === true && !db.get('SELECT id FROM workspaces WHERE central = 1')) db.run('UPDATE workspaces SET central = 1 WHERE id = ?', wsId);
       const projectIds = new Map();
       for (const p of list(payload.projects)) {
         const created = createProject(wsId, p); projectIds.set(p.id, created.id);
@@ -529,7 +538,7 @@ export function createKernel({ db, ai, config }) {
   }
 
   return {
-    audit, auth, execution, connectors, hub, studio, generateForStudio, cinema, renderer, ai, registry, events, processEvents,
+    audit, auth, backup, execution, connectors, hub, studio, generateForStudio, cinema, renderer, ai, registry, events, processEvents,
     // Enregistre un module auprès du noyau (modules externes chargés au démarrage, ou par programme).
     registerModule(mod, source = 'externe') {
       try { const m = registry.register(mod, { source }); audit.record({ actor: 'omnia', event: 'module.enregistre', entity: 'module', detail: { id: m.id, source, regles: m.rules.length, actions: m.actions.length } }); return m; }
