@@ -1,0 +1,24 @@
+# Render (Blueprint) : OMNIA, l'application de travail de VELYX. Node seul, aucune dépendance.
+# Le serveur refuse de démarrer exposé sans protection : OMNIA_TOKEN est généré par Render (à lire dans son
+# tableau de bord), puis le premier compte créé devient administrateur.
+# Plan gratuit : le disque n'est pas conservé entre deux déploiements. Tant qu'aucun disque persistant n'est
+# attaché (payant, décision du propriétaire), la base repart de zéro à chaque redémarrage.
+services:
+  - type: web
+    name: omnia
+    runtime: node
+    plan: free
+    buildCommand: "true"
+    startCommand: node --disable-warning=ExperimentalWarning src/server.js
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "22.13.0"
+      - key: OMNIA_HOST
+        value: 0.0.0.0
+      - key: OMNIA_COOKIE_SECURE
+        value: "1"
+      - key: OMNIA_TOKEN
+        generateValue: true
+      - key: OMNIA_STRIPE_KEY
+        sync: false # clé Stripe restreinte en lecture, saisie par le propriétaire dans Render
