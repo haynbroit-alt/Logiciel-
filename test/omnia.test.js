@@ -759,3 +759,33 @@ test('sauvegarde d\'instance : chiffrée, scellée, restaurée à l\'identique ;
   assert.throws(() => fresh.backup.restore(file, phrase), /contient déjà du travail/);
   assert.throws(() => k.backup.restore(file, phrase), /contient déjà du travail/);
 });
+
+test('coordination : lecture en direct des projets, limitée aux espaces auxquels le compte a droit', async () => {
+  const { k, config } = setup();
+  seedWorkspaces(k, path.join(import.meta.dirname, '..', 'seed', 'velyx.json'));
+  const [central, alll, velyx] = k.listWorkspaces();
+  k.createTransaction(alll.id, { date: d(0), amount: 29, label: 'Vente' });
+  k.createTask(velyx.id, { title: 'Relancer le cabinet', priority: 1, due_date: d(3) });
+  const all = k.coordination(k.listWorkspaces().map((w) => w.id));
+  assert.equal(all.espaces.length, 17, 'l\'espace central ne se compte pas lui-même');
+  assert.equal(all.espaces.find((e) => e.id === alll.id).revenus_30j, 29);
+  assert.deepEqual(all.espaces.find((e) => e.id === velyx.id).prochaine_tache, { title: 'Relancer le cabinet', due_date: d(3), en_retard: true });
+  assert.equal(all.totaux.par_devise.EUR.revenus_30j, 29); assert.equal(all.totaux.taches_en_retard, 1);
+  assert.equal(k.data(central.id).transactions.length, 0, 'rien n\'est copié dans l\'espace central');
+
+  // Par HTTP : un membre du seul espace Velyx ne voit ni Alll ni ses encaissements, même dans les totaux.
+  k.auth.createUser({ name: 'Admin', email: 'admin@exemple.fr', password: 'motdepasse-solide-1' }, { admin: true });
+  const bob = k.auth.createUser({ name: 'Bob', email: 'bob@exemple.fr', password: 'motdepasse-solide-2' });
+  k.auth.setMember(velyx.id, { userId: bob.id, role: 'lecteur' });
+  const server = createApp(config, k); await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const session = async (email, password) => (await fetch(`${base}/api/session`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password }) })).headers.get('set-cookie').split(';')[0];
+  try {
+    assert.equal((await fetch(`${base}/api/coordination`)).status, 401, 'sans connexion, rien');
+    const seenByBob = await (await fetch(`${base}/api/coordination`, { headers: { cookie: await session('bob@exemple.fr', 'motdepasse-solide-2') } })).json();
+    assert.deepEqual(seenByBob.espaces.map((e) => e.id), [velyx.id]);
+    assert.deepEqual(seenByBob.totaux.par_devise, { EUR: { revenus_30j: 0, depenses_30j: 0 } }); assert.ok(!JSON.stringify(seenByBob).includes('Alll'));
+    const seenByAdmin = await (await fetch(`${base}/api/coordination`, { headers: { cookie: await session('admin@exemple.fr', 'motdepasse-solide-1') } })).json();
+    assert.equal(seenByAdmin.espaces.length, 17);
+  } finally { await new Promise((r) => server.close(r)); }
+});
