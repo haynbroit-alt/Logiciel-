@@ -136,6 +136,9 @@ const ROUTES = [
   ['POST', '/api/espaces/:ws/documents', (k, p, b) => k.createDocument(k.workspace(p.ws).id, b)],
   ['POST', '/api/espaces/:ws/documents/generer', (k, p, b) => k.generate(k.workspace(p.ws).id, b.template, b.brief)],
   ['DELETE', '/api/espaces/:ws/documents/:id', (k, p) => k.deleteDocument(k.workspace(p.ws).id, p.id)],
+  // Partage explicite d'un document avec l'espace central (membre de l'espace d'origine) ; lecture depuis l'espace central.
+  ['PUT', '/api/espaces/:ws/documents/:id/partage', (k, p, b) => k.shareDocument(k.workspace(p.ws).id, p.id, b.partage === true)],
+  ['GET', '/api/espaces/:ws/partages', (k, p) => k.sharedDocuments(k.workspace(p.ws).id)],
   ['GET', '/api/espaces/:ws/recommandations', (k, p) => k.listRecommendations(k.workspace(p.ws).id)],
   ['POST', '/api/espaces/:ws/recommandations/:id/accepter', (k, p, b) => k.acceptRecommendation(p.ws, p.id, b.option)],
   ['POST', '/api/espaces/:ws/recommandations/:id/rejeter', (k, p) => k.rejectRecommendation(k.workspace(p.ws).id, p.id)],

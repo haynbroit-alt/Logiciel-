@@ -165,6 +165,19 @@ export function createKernel({ db, ai, config }) {
     events.emit('document.cree', wsId, { documentId: id, title });
     return db.get('SELECT * FROM documents WHERE id = ?', id);
   }
+  // Mémoire partagée : rien n'est copié. Un document reste dans son espace ; le partage le rend lisible depuis
+  // l'espace central, et se retire à tout moment. Par défaut, tout est privé.
+  function shareDocument(wsId, id, shared) {
+    need(!workspace(wsId).central, 'Un document de l\'espace central lui appartient déjà', 409);
+    need(db.get('SELECT id FROM workspaces WHERE central = 1'), 'Aucun espace central avec lequel partager', 409);
+    need(db.run('UPDATE documents SET shared = ? WHERE id = ? AND workspace_id = ?', shared ? 1 : 0, id, wsId).changes, 'Document introuvable', 404);
+    audit.record({ workspaceId: wsId, event: shared ? 'document.partage' : 'document.partage_retire', entity: 'document', entityId: Number(id), detail: {} });
+    return db.get('SELECT * FROM documents WHERE id = ?', id);
+  }
+  function sharedDocuments(wsId) {
+    need(workspace(wsId).central, 'Seul l\'espace central lit la mémoire partagée', 409);
+    return db.all('SELECT d.id, d.title, d.kind, d.content, d.created_at, d.workspace_id, w.name AS espace FROM documents d JOIN workspaces w ON w.id = d.workspace_id WHERE d.shared = 1 ORDER BY d.id DESC');
+  }
   const deleteDocument = (wsId, id) => need(db.run('DELETE FROM documents WHERE id = ? AND workspace_id = ?', id, wsId).changes, 'Document introuvable', 404);
 
   // ---------- Lecture ----------
@@ -573,7 +586,7 @@ export function createKernel({ db, ai, config }) {
       ia: { fournisseurs: ai.providers ?? [], generative: ai.generative },
     }),
     meta: () => ({ modules: registry.modules(), events: EVENTS, kinds: KINDS, sectors: SECTORS, templates: Object.entries(TEMPLATES).map(([id, t]) => ({ id, title: t.title })), actionTypes: execution.types(), connectors: connectors.list(), channelTypes: Object.entries(CHANNEL_TYPES).map(([id, t]) => ({ id, label: t.label })), tokenPurposes: TOKEN_PURPOSES, stripe: hub.stripeConfigured(), ai: { provider: ai.provider, model: ai.model, generative: ai.generative } }),
-    listWorkspaces: () => db.all('SELECT * FROM workspaces ORDER BY id').map(wsRow), coordination,
+    listWorkspaces: () => db.all('SELECT * FROM workspaces ORDER BY id').map(wsRow), coordination, shareDocument, sharedDocuments,
     workspace, createWorkspace, updateWorkspace, deleteWorkspace, exportWorkspace, importWorkspace,
     data, createProject, updateProject, deleteProject, createTask, deleteTask,
     updateTask(wsId, id, patch) { const t = updateTask(wsId, id, patch); need(t, 'Tâche introuvable', 404); return t; },

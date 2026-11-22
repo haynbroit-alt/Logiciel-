@@ -331,6 +331,7 @@ const views = {
 
   async memoire() {
     const d = await api('GET', ws('/donnees')); const open = d.documents.find((x) => x.id === state.openDoc);
+    const central = state.workspace.central; const shared = central ? await api('GET', ws('/partages')) : null;
     return page('Mémoire', 'La connaissance de votre activité : notes, documents produits, brouillons.', null,
       h('div', { class: 'grid cols-2' },
         h('form', { class: 'card stack', onsubmit: act((ev) => api('POST', ws('/documents/generer'), formData(ev.target)), (doc) => { state.openDoc = doc.id; toast(doc.fallbackReason ? 'IA indisponible : document produit en mode local' : 'Document créé'); }) },
@@ -341,8 +342,11 @@ const views = {
           h('label', {}, 'Ou importer des fichiers texte (.txt, .md, .csv)', h('input', { type: 'file', multiple: true, accept: '.txt,.md,.csv,text/plain,text/markdown,text/csv', onchange: act(async (ev) => { const files = [...ev.target.files]; for (const f of files) { if (f.size > 200000) throw new Error(`« ${f.name} » dépasse 200 Ko`); await api('POST', ws('/documents'), { title: f.name, kind: 'fichier', content: await f.text() }); } return files.length; }, (n) => n && toast(`${n} fichier(s) ajouté(s) à la mémoire`)) })))),
       open ? h('div', { class: 'card stack' }, h('div', { class: 'row between' }, h('h2', {}, open.title), h('button', { onclick: () => { state.openDoc = null; render(); } }, 'Fermer')), open.origin === 'omnia' && open.kind !== 'brouillon_email' ? md(open.content) : h('pre', { class: 'doc' }, open.content)) : null,
       h('div', { class: 'card stack' }, h('h2', {}, `Documents (${d.documents.length})`),
-        d.documents.length ? d.documents.map((doc) => h('div', { class: 'item row between' }, h('div', {}, h('strong', {}, doc.title), h('p', { class: 'muted small' }, `${doc.kind} · ${doc.origin === 'omnia' ? 'produit par OMNIA' : 'ajouté par vous'} · ${fdate(doc.created_at)}`)),
-          h('div', { class: 'row' }, h('button', { onclick: () => { state.openDoc = doc.id; render(); } }, 'Ouvrir'), h('button', { class: 'link danger', onclick: act(() => api('DELETE', ws(`/documents/${doc.id}`)), 'Document supprimé') }, 'Supprimer')))) : empty('Aucun document.')));
+        d.documents.length ? d.documents.map((doc) => h('div', { class: 'item row between' }, h('div', {}, h('strong', {}, doc.title), h('p', { class: 'muted small' }, `${doc.kind} · ${doc.origin === 'omnia' ? 'produit par OMNIA' : 'ajouté par vous'} · ${fdate(doc.created_at)}${doc.shared ? ' · partagé avec l\'espace central' : ''}`)),
+          h('div', { class: 'row' }, h('button', { onclick: () => { state.openDoc = doc.id; render(); } }, 'Ouvrir'), central ? null : h('button', { onclick: act(() => api('PUT', ws(`/documents/${doc.id}/partage`), { partage: !doc.shared }), doc.shared ? 'Partage retiré : le document redevient privé' : 'Document partagé avec l\'espace central') }, doc.shared ? 'Retirer le partage' : 'Partager'), h('button', { class: 'link danger', onclick: act(() => api('DELETE', ws(`/documents/${doc.id}`)), 'Document supprimé') }, 'Supprimer')))) : empty('Aucun document.')),
+      shared ? h('div', { class: 'card stack' }, h('h2', {}, `Mémoire partagée (${shared.length})`),
+        h('p', { class: 'muted small' }, 'Documents que les projets ont choisi de partager. Ils restent dans leur espace ; tout le reste demeure privé à chaque projet.'),
+        shared.length ? shared.map((doc) => h('details', { class: 'item' }, h('summary', {}, h('strong', {}, doc.title), ` — ${doc.espace}`), h('pre', { class: 'doc' }, doc.content))) : empty('Aucun document partagé.')) : null);
   },
 
   async automatisations() {
