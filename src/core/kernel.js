@@ -286,6 +286,34 @@ export function createKernel({ db, ai, config }) {
     return { espaces, totaux: { espaces: espaces.length, taches_ouvertes: total('taches_ouvertes'), taches_en_retard: total('taches_en_retard'), autorisations_en_attente: total('autorisations_en_attente'), par_devise } };
   }
 
+  // Missions : l'espace central confie un même objectif à plusieurs projets. Rien n'est dupliqué : chaque projet reçoit
+  // une tâche dans son propre espace, et l'avancement se lit en direct. `writable` et `readable` sont les espaces
+  // auxquels la personne a droit ; on n'écrit ni ne lit ailleurs.
+  function missions(centralId, readable) {
+    need(workspace(centralId).central, 'Les missions se lisent depuis l\'espace central', 409);
+    const allowed = new Set(readable.map(Number));
+    return db.all('SELECT * FROM missions ORDER BY id DESC').map((m) => {
+      const projets = db.all('SELECT t.id AS task_id, t.status, t.workspace_id, w.name AS espace FROM tasks t JOIN workspaces w ON w.id = t.workspace_id WHERE t.mission_id = ? ORDER BY w.id', m.id).filter((t) => allowed.has(t.workspace_id));
+      return { ...m, projets, total: projets.length, faits: projets.filter((t) => t.status === 'fait').length };
+    }).filter((m) => m.total);
+  }
+  function createMission(centralId, input, writable) {
+    need(workspace(centralId).central, 'Une mission se lance depuis l\'espace central', 409);
+    const title = text(input.title, 300); need(title, 'Objet de la mission requis');
+    const targets = [...new Set((Array.isArray(input.workspaces) ? input.workspaces : []).map(Number))];
+    need(targets.length, 'Choisissez au moins un projet');
+    const allowed = new Set(writable.map(Number));
+    for (const id of targets) { need(!workspace(id).central, 'L\'espace central ne se confie pas de mission', 409); need(allowed.has(id), 'Vous n\'avez pas le droit d\'écrire dans cet espace', 403); }
+    const due = isoDate(input.due_date);
+    const id = db.tx(() => {
+      const mid = db.insert('INSERT INTO missions (title, due_date, created_at) VALUES (?,?,?)', title, due, now());
+      for (const ws of targets) db.run('UPDATE tasks SET mission_id = ? WHERE id = ?', mid, createTask(ws, { title, due_date: due, priority: 1, notes: 'Mission confiée depuis l\'espace central.' }).id);
+      return mid;
+    });
+    audit.record({ workspaceId: centralId, event: 'mission.lancee', entity: 'mission', entityId: id, detail: { espaces: targets } });
+    return missions(centralId, targets).find((m) => m.id === id);
+  }
+
   function dashboard(wsId) {
     const w = workspace(wsId); const d = data(w.id); const date = clock();
     const d30 = today(new Date(date.getTime() - 30 * 86400000));
@@ -586,7 +614,7 @@ export function createKernel({ db, ai, config }) {
       ia: { fournisseurs: ai.providers ?? [], generative: ai.generative },
     }),
     meta: () => ({ modules: registry.modules(), events: EVENTS, kinds: KINDS, sectors: SECTORS, templates: Object.entries(TEMPLATES).map(([id, t]) => ({ id, title: t.title })), actionTypes: execution.types(), connectors: connectors.list(), channelTypes: Object.entries(CHANNEL_TYPES).map(([id, t]) => ({ id, label: t.label })), tokenPurposes: TOKEN_PURPOSES, stripe: hub.stripeConfigured(), ai: { provider: ai.provider, model: ai.model, generative: ai.generative } }),
-    listWorkspaces: () => db.all('SELECT * FROM workspaces ORDER BY id').map(wsRow), coordination, shareDocument, sharedDocuments,
+    listWorkspaces: () => db.all('SELECT * FROM workspaces ORDER BY id').map(wsRow), coordination, missions, createMission, shareDocument, sharedDocuments,
     workspace, createWorkspace, updateWorkspace, deleteWorkspace, exportWorkspace, importWorkspace,
     data, createProject, updateProject, deleteProject, createTask, deleteTask,
     updateTask(wsId, id, patch) { const t = updateTask(wsId, id, patch); need(t, 'Tâche introuvable', 404); return t; },
