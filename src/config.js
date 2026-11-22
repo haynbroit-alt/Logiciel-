@@ -11,7 +11,8 @@ const env = process.env;
 export function loadConfig(overrides = {}) {
   const dataDir = overrides.dataDir ?? env.OMNIA_DATA_DIR ?? path.resolve('data');
   return {
-    host: env.OMNIA_HOST ?? '127.0.0.1',
+    // Un hébergeur qui fournit PORT attend une écoute sur toutes les interfaces ; le démarrage reste refusé sans protection.
+    host: env.OMNIA_HOST ?? (env.PORT ? '0.0.0.0' : '127.0.0.1'),
     port: Number(env.OMNIA_PORT ?? env.PORT ?? 4747), // PORT : fourni par l'hébergeur
     token: env.OMNIA_TOKEN ?? '',
     stripeKey: env.OMNIA_STRIPE_KEY ?? '',
