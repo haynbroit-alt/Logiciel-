@@ -253,6 +253,26 @@ export function createKernel({ db, ai, config }) {
     return { insights, created, resolved, gaps: dataGaps(d), ruleErrors };
   }
 
+  // Coordination : lecture en direct des espaces demandés, sans rien copier dans l'espace central.
+  // L'appelant ne passe que les espaces auxquels la personne a droit : un espace absent de la liste n'apparaît nulle part,
+  // ni dans les lignes ni dans les totaux.
+  function coordination(ids) {
+    const allowed = new Set(ids.map(Number)); const date = clock(); const t0 = today(date);
+    const espaces = db.all('SELECT * FROM workspaces ORDER BY id').map(wsRow).filter((w) => !w.central && allowed.has(w.id)).map((w) => {
+      const d = data(w.id); const k = computeKpis(d, date);
+      const next = d.tasks.filter((t) => t.status !== 'fait').sort((a, b) => a.priority - b.priority || String(a.due_date ?? '9').localeCompare(String(b.due_date ?? '9')))[0];
+      return {
+        id: w.id, name: w.name, currency: w.currency, taches_ouvertes: k.taches_ouvertes, taches_en_retard: k.taches_en_retard,
+        autorisations_en_attente: execution.list(w.id, 'en_attente').length, revenus_30j: k.revenus_30j, depenses_30j: k.depenses_30j,
+        prochaine_tache: next ? { title: next.title, due_date: next.due_date ?? null, en_retard: Boolean(next.due_date && next.due_date < t0) } : null,
+      };
+    });
+    const total = (key) => espaces.reduce((n, e) => n + e[key], 0);
+    const par_devise = {};
+    for (const e of espaces) { const c = (par_devise[e.currency] ??= { revenus_30j: 0, depenses_30j: 0 }); c.revenus_30j += e.revenus_30j; c.depenses_30j += e.depenses_30j; }
+    return { espaces, totaux: { espaces: espaces.length, taches_ouvertes: total('taches_ouvertes'), taches_en_retard: total('taches_en_retard'), autorisations_en_attente: total('autorisations_en_attente'), par_devise } };
+  }
+
   function dashboard(wsId) {
     const w = workspace(wsId); const d = data(w.id); const date = clock();
     const d30 = today(new Date(date.getTime() - 30 * 86400000));
@@ -553,7 +573,7 @@ export function createKernel({ db, ai, config }) {
       ia: { fournisseurs: ai.providers ?? [], generative: ai.generative },
     }),
     meta: () => ({ modules: registry.modules(), events: EVENTS, kinds: KINDS, sectors: SECTORS, templates: Object.entries(TEMPLATES).map(([id, t]) => ({ id, title: t.title })), actionTypes: execution.types(), connectors: connectors.list(), channelTypes: Object.entries(CHANNEL_TYPES).map(([id, t]) => ({ id, label: t.label })), tokenPurposes: TOKEN_PURPOSES, stripe: hub.stripeConfigured(), ai: { provider: ai.provider, model: ai.model, generative: ai.generative } }),
-    listWorkspaces: () => db.all('SELECT * FROM workspaces ORDER BY id').map(wsRow),
+    listWorkspaces: () => db.all('SELECT * FROM workspaces ORDER BY id').map(wsRow), coordination,
     workspace, createWorkspace, updateWorkspace, deleteWorkspace, exportWorkspace, importWorkspace,
     data, createProject, updateProject, deleteProject, createTask, deleteTask,
     updateTask(wsId, id, patch) { const t = updateTask(wsId, id, patch); need(t, 'Tâche introuvable', 404); return t; },

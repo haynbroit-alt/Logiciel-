@@ -108,6 +108,8 @@ const ROUTES = [
     const mine = new Set(k.auth.workspaceIds(c.user));
     return all.filter((w) => c.user.admin || mine.has(w.id)).map((w) => ({ ...w, role: k.auth.roleIn(c.user, w.id) }));
   }],
+  // Coordination : uniquement les espaces auxquels la personne a droit (tous sans comptes ou pour un administrateur).
+  ['GET', '/api/coordination', (k, p, b, c) => k.coordination(k.listWorkspaces().filter((w) => !c.user || c.user.admin || k.auth.roleIn(c.user, w.id)).map((w) => w.id))],
   ['POST', '/api/espaces', async (k, p, b, c) => own(k, c, await k.createWorkspace(b))],
   ['POST', '/api/espaces/import', (k, p, b, c) => own(k, c, k.importWorkspace(b))],
   ['GET', '/api/espaces/:ws/membres', (k, p) => k.auth.members(k.workspace(p.ws).id)],

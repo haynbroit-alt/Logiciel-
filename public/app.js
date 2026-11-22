@@ -204,6 +204,8 @@ function actionCard(a) {
 const views = {
   async tableau() {
     const d = await api('GET', ws('/tableau-de-bord')); const cur = d.workspace.currency; const k = d.kpis;
+    const coord = d.workspace.central ? await api('GET', '/coordination') : null;
+    const openWs = (id) => () => { state.wsId = id; localStorage.setItem('omnia.ws', id); state.chat = []; state.openDoc = null; render(); };
     const kpi = (label, value, neg) => h('div', { class: 'card kpi' }, h('div', { class: 'muted small' }, label), h('div', { class: `v ${neg ? 'neg' : ''}` }, value));
     const maxCat = Math.max(1, ...d.expensesByCategory.map((c) => c.total));
     return page(d.workspace.name, `${d.workspace.kind} · secteur ${d.workspace.sector}${d.lastAnalysis ? ` · dernière analyse le ${fdatetime(d.lastAnalysis)}` : ' · aucune analyse lancée'}`,
@@ -211,6 +213,12 @@ const views = {
       h('div', { class: 'grid kpis' },
         kpi('Revenus (30 j)', money(k.revenus_30j, cur)), kpi('Dépenses (30 j)', money(k.depenses_30j, cur)), kpi('Solde (30 j)', money(k.solde_30j, cur), k.solde_30j < 0),
         kpi('Tâches ouvertes', k.taches_ouvertes), kpi('En retard', k.taches_en_retard, k.taches_en_retard > 0), kpi('Terminées (30 j)', k.taches_terminees_30j)),
+      coord ? h('div', { class: 'card stack' }, h('h2', {}, `Projets (${coord.totaux.espaces})`),
+        h('p', { class: 'muted small' }, `Lu en direct dans chaque espace auquel vous avez droit ; rien n'est copié ici. ${coord.totaux.taches_ouvertes} tâche(s) ouverte(s), ${coord.totaux.taches_en_retard} en retard, ${coord.totaux.autorisations_en_attente} autorisation(s) en attente.`),
+        coord.espaces.map((e) => h('div', { class: 'item' },
+          h('div', { class: 'row between' }, h('button', { class: 'link', onclick: openWs(e.id) }, e.name),
+            h('span', { class: 'small muted' }, `${e.taches_ouvertes} tâche(s)${e.taches_en_retard ? ` · ${e.taches_en_retard} en retard` : ''}${e.autorisations_en_attente ? ` · ${e.autorisations_en_attente} autorisation(s)` : ''} · ${money(e.revenus_30j, e.currency)} encaissés (30 j)`)),
+          e.prochaine_tache ? h('p', { class: 'small muted' }, e.prochaine_tache.title) : null))) : null,
       d.priorities.length ? h('div', { class: 'card stack' }, h('h2', {}, 'Priorités du moment'),
         h('ol', { class: 'prio' }, d.priorities.map((x) => h('li', {}, h('strong', {}, x.title), ' ', badge(x.kind === 'autorisation' ? 'en_attente' : x.kind === 'recommandation' ? 'opportunite' : 'probleme', x.kind), h('div', { class: 'muted small' }, x.why))))) : null,
       d.gaps.length ? h('div', { class: 'notice info stack', role: 'note' }, h('strong', {}, 'Pour une analyse plus complète'), d.gaps.map((g) => h('span', { class: 'small' }, g))) : null,
